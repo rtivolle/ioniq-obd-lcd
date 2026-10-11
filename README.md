@@ -97,10 +97,10 @@ sudo journalctl -u ioniq-obd -f
 
 ## Usage
 
-1. Open your browser on a phone or laptop connected to the same network / Wi-Fi:
-   ```
-   http://<raspberry-pi-ip>:5000
-   ```
+1. Open your browser on any phone, tablet, or laptop on your Tailnet or local Wi-Fi:
+   - **Tailnet HTTPS URL**: `https://rspi3b-1.tail7355c5.ts.net/`
+   - **Tailnet Direct IP**: `http://100.75.142.73:5000`
+   - **Local Network**: `http://<raspberry-pi-ip>:5000` (or `http://rspi3b.local:5000`)
 2. Navigate to the **"Bluetooth & OBD"** tab.
 3. Click **"Scan for Bluetooth Adapters"**, find your ELM327 dongle, and click **"Pair & Connect"**.
 4. Disable **"Simulation Mode"** once paired to start streaming live vehicle CAN bus data.
