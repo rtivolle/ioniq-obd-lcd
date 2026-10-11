@@ -267,3 +267,5 @@ dialog .button-row { margin-top: 28px; justify-content: flex-end; }
 @media (max-width: 760px) {
   .notice .text-button { flex-basis: 100%; margin-left: 26px; }
 }
+/* Keep accessible table labels inside the horizontal scrolling region. */
+.table-scroll { position: relative; }
