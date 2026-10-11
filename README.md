@@ -100,12 +100,67 @@ sudo journalctl -u ioniq-obd -f
    - **Tailnet HTTPS URL**: `https://rspi3b-1.tail7355c5.ts.net/`
    - **Tailnet Direct IP**: `http://100.75.142.73:5000`
    - **Local Network**: `http://<raspberry-pi-ip>:5000` (or `http://rspi3b.local:5000`)
-2. Navigate to the **"Bluetooth & OBD"** tab.
-3. Click **"Scan for Bluetooth Adapters"**, find your ELM327 dongle, and click **"Pair & Connect"**.
+2. Navigate to **Connection**.
+3. Click **Scan for devices**, find your ELM327 dongle, and click **Pair & connect**.
 4. The system will connect and begin streaming live vehicle CAN bus data and logging trips.
+
+### Dashboard and local preview
+
+**Overview** puts battery charge, speed, power flow, trip statistics, and the live LCD mirror together. Use **LCD display** to save a rotating or fixed layout and send a two-line message. **Trip history** provides recent-trip summaries and CSV downloads. All fonts, icons, scripts, and styles are served locally.
+
+To preview the interface without Flask, a Raspberry Pi, or an OBD adapter:
+
+```bash
+python3 tools/preview.py
+```
+
+Open `http://127.0.0.1:5050`. The preview is explicitly labeled as sample data; controls affect memory only and reset when restarted. It never connects to your vehicle or opens your trip database.
+
+For UI checks, use `--scenario zero`, `regen`, `charging`, `disconnected`, or `empty`, and optionally `--port 5051`.
 
 ---
 
 ## License
 
 MIT License.
+
+## Data validity and session recovery
+
+Each telemetry field has `fresh` and `metric_updated_at` metadata in
+`/api/status`. Failed or missing payloads invalidate their fields immediately;
+fields also expire after 10 seconds. Unavailable values are JSON `null`, rather
+than zero or an old reading. Three consecutive polls without fresh speed,
+battery power, and charging flags cause the worker to reconnect (when automatic
+connection is enabled). Only the OBD worker owns Bluetooth I/O; web operations
+are queued between polls, including scanning, pairing, reconnecting, forgetting,
+and `/api/bluetooth/disconnect`.
+
+Automatic driving trips start above 2 km/h. Stationary battery consumption does
+not start a trip. Stationary charging indicated by the BMS ends the driving trip
+and records a separate charging session. Motion takes priority over the charging
+flag, so regenerative braking remains driving energy. `/api/charging` returns
+charging history with battery energy added, recorded duration, and SOC change.
+Energy added measures battery-side power, not electricity drawn at the wall.
+Manual trip recording is refused during charging or unavailable telemetry.
+
+Samples and trip totals commit together in SQLite on every valid poll. Charging
+totals are also checkpointed every valid poll. On startup, unfinished sessions
+are retained as `interrupted`, ending at their last checkpoint; the next session
+starts separately. Missing-data intervals and time powered off are excluded from
+energy and distance integration. Charging duration counts valid sample intervals.
+Existing databases receive an additive migration automatically. Back up
+`trips.db` before upgrading. Old sessions without checkpoints retain their
+previously saved totals. Durability depends on the Pi storage surviving power
+loss; no application can recover a physically corrupted SD card.
+
+For local testing, `IONIQ_DB_PATH` overrides the default database location.
+Run the regression checks with `python3 -m unittest discover -s tests -v`.
+
+## Vehicle diagnostics
+
+The Connection tab offers read-only ECU/fault reports and expanded battery
+snapshots for the confirmed 2017 Ioniq Electric 28 kWh Canadian profile. Standard
+fault clearing saves a fresh report and requires an explicit operator confirmation
+before Mode 04. Community battery definitions remain unvalidated on the physical
+vehicle; unsupported ECU services and actuator controls stay unavailable.
+See [diagnostic scope, sources, and validation](docs/DIAGNOSTICS.md).

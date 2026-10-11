@@ -7,7 +7,7 @@ import logging
 import math
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,8 +35,30 @@ class IoniqData:
     is_charging: bool = False
     status_text: str = "Disconnected"
 
+    metric_updated_at: Dict[str, float] = field(default_factory=dict)
+    metric_valid: Dict[str, bool] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        now = time.time()
+        result["fresh"] = {}
+        for key in METRICS:
+            fresh = self.connected and self.metric_valid.get(key, False) and 0 <= now - self.metric_updated_at.get(key, 0) <= 10
+            result["fresh"][key] = fresh
+            if not fresh:
+                result[key] = None
+        if self.connected and not all(result["fresh"][key] for key in CORE_METRICS):
+            result["status_text"] = "Data unavailable"
+        return result
+
+
+METRICS = (
+    "speed_kmh", "motor_rpm", "soc_bms", "soc_display", "battery_voltage",
+    "battery_current", "battery_power_kw", "battery_max_temp", "battery_min_temp",
+    "aux_voltage", "soh", "max_charge_power_kw", "max_discharge_power_kw",
+    "cum_energy_charged_kwh", "cum_energy_discharged_kwh", "is_charging",
+)
+CORE_METRICS = ("speed_kmh", "battery_power_kw", "is_charging")
 
 
 class IoniqOBD:
@@ -47,6 +69,9 @@ class IoniqOBD:
         self.data = IoniqData()
         self.last_query_time = 0.0
         self._current_header = ""
+        self.consecutive_failures = 0
+        self.reconnect_required = False
+        self._comm_error = False
 
     def initialize_elm327(self) -> bool:
         """Initializes ELM327 with recommended settings for Hyundai CAN bus."""
@@ -63,6 +88,10 @@ class IoniqOBD:
         for cmd, delay in init_cmds:
             resp = self._send_command(cmd, timeout=delay)
             logger.debug("Init [%s] -> %r", cmd, resp)
+            if not resp or (cmd != "AT Z" and "OK" not in resp.upper()):
+                self.data.connected = False
+                self.data.status_text = "ELM327 initialization failed"
+                return False
             time.sleep(0.05)
 
         self.data.connected = True
@@ -77,10 +106,13 @@ class IoniqOBD:
             self.conn.flush_input()
             self.conn.write((cmd + "\r").encode("ascii"))
             resp = self.conn.read_until(b">", timeout=timeout)
+            if not resp.endswith(b">"):
+                return ""
             text = resp.decode("ascii", errors="ignore").replace(">", "").strip()
             return text
         except Exception as e:
             logger.error("Error sending %s: %s", cmd, e)
+            self._comm_error = True
             self.data.connected = False
             self.data.status_text = f"Comm error: {e}"
             return ""
@@ -88,12 +120,14 @@ class IoniqOBD:
     def set_header(self, header: str):
         """Sets CAN header if different from current."""
         if self._current_header != header:
-            self._send_command(f"AT SH {header}", timeout=0.5)
+            response = self._send_command(f"AT SH {header}", timeout=0.5)
+            if "OK" not in response.upper():
+                raise ConnectionError("CAN header selection failed")
             self._current_header = header
 
     def _parse_hex_payload(self, raw_resp: str, expected_prefix: str) -> Optional[bytes]:
         """Strips CAN multi-frame numbering and returns raw byte payload."""
-        if not raw_resp or "NO DATA" in raw_resp or "ERROR" in raw_resp:
+        if not raw_resp or any(error in raw_resp.upper() for error in ("NO DATA", "ERROR", "STOPPED", "UNABLE TO CONNECT")):
             return None
 
         clean_lines = []
@@ -121,8 +155,15 @@ class IoniqOBD:
 
     def query_all(self) -> IoniqData:
         """Performs a full poll cycle of BMS extended PIDs and vehicle speed."""
-        now = time.time()
-        self.data.timestamp = now
+        self._comm_error = False
+        self.data.metric_valid = dict.fromkeys(METRICS, False)
+
+        def mark(*keys):
+            now = time.time()
+            for key in keys:
+                self.data.metric_valid[key] = True
+                self.data.metric_updated_at[key] = now
+            self.data.timestamp = now
 
         try:
             # 1. Query Speed (Standard OBD2 010D)
@@ -131,6 +172,7 @@ class IoniqOBD:
             speed_bytes = self._parse_hex_payload(speed_resp, "410D")
             if speed_bytes and len(speed_bytes) >= 1:
                 self.data.speed_kmh = float(speed_bytes[0])
+                mark("speed_kmh")
 
             # 2. Query BMS Extended PID 2101 (Header 7E4)
             self.set_header("7E4")
@@ -173,12 +215,17 @@ class IoniqOBD:
                 if len(bms_bytes) > 29:
                     self.data.aux_voltage = round(bms_bytes[29] * 0.1, 1)
 
+                mark("soc_bms", "max_charge_power_kw", "max_discharge_power_kw",
+                     "is_charging", "battery_current", "battery_voltage",
+                     "battery_power_kw", "battery_max_temp", "battery_min_temp", "aux_voltage")
+
                 # Cumulative energies
                 if len(bms_bytes) >= 44:
                     cec = (bms_bytes[36] << 24) | (bms_bytes[37] << 16) | (bms_bytes[38] << 8) | bms_bytes[39]
                     ced = (bms_bytes[40] << 24) | (bms_bytes[41] << 16) | (bms_bytes[42] << 8) | bms_bytes[43]
                     self.data.cum_energy_charged_kwh = round(cec / 10.0, 1)
                     self.data.cum_energy_discharged_kwh = round(ced / 10.0, 1)
+                    mark("cum_energy_charged_kwh", "cum_energy_discharged_kwh")
 
                 # Motor RPM (bytes 53, 54 if present)
                 if len(bms_bytes) >= 55:
@@ -186,6 +233,7 @@ class IoniqOBD:
                     if rpm >= 32768:
                         rpm -= 65536
                     self.data.motor_rpm = rpm
+                    mark("motor_rpm")
 
             # 3. Query BMS Extended PID 2105 (SOH & Display SOC)
             soh_resp = self._send_command("21 05", timeout=1.5)
@@ -197,15 +245,16 @@ class IoniqOBD:
 
                 # Byte 31: Display SOC (%)
                 self.data.soc_display = round(soh_bytes[31] / 2.0, 1)
-            elif self.data.soc_bms > 0 and self.data.soc_display == 0:
-                self.data.soc_display = self.data.soc_bms
+                mark("soh", "soc_display")
 
-            self.data.connected = True
-            self.data.status_text = "Live Data OK"
+            self.data.connected = bool(self.conn and self.conn.connected and not self._comm_error)
         except Exception as e:
             logger.error("Error during query_all: %s", e)
             self.data.connected = False
             self.data.status_text = f"Error: {e}"
 
-
+        valid = self.data.connected and all(self.data.metric_valid.get(k) for k in CORE_METRICS)
+        self.consecutive_failures = 0 if valid else self.consecutive_failures + 1
+        self.reconnect_required = self.consecutive_failures >= 3 or not self.data.connected
+        self.data.status_text = "Live Data OK" if valid else "Data unavailable"
         return self.data
