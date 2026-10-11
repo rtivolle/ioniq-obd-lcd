@@ -100,9 +100,23 @@ sudo journalctl -u ioniq-obd -f
    - **Tailnet HTTPS URL**: `https://rspi3b-1.tail7355c5.ts.net/`
    - **Tailnet Direct IP**: `http://100.75.142.73:5000`
    - **Local Network**: `http://<raspberry-pi-ip>:5000` (or `http://rspi3b.local:5000`)
-2. Navigate to the **"Bluetooth & OBD"** tab.
-3. Click **"Scan for Bluetooth Adapters"**, find your ELM327 dongle, and click **"Pair & Connect"**.
+2. Navigate to **Connection**.
+3. Click **Scan for devices**, find your ELM327 dongle, and click **Pair & connect**.
 4. The system will connect and begin streaming live vehicle CAN bus data and logging trips.
+
+### Dashboard and local preview
+
+**Overview** puts battery charge, speed, power flow, trip statistics, and the live LCD mirror together. Use **LCD display** to save a rotating or fixed layout and send a two-line message. **Trip history** provides recent-trip summaries and CSV downloads. All fonts, icons, scripts, and styles are served locally.
+
+To preview the interface without Flask, a Raspberry Pi, or an OBD adapter:
+
+```bash
+python3 tools/preview.py
+```
+
+Open `http://127.0.0.1:5050`. The preview is explicitly labeled as sample data; controls affect memory only and reset when restarted. It never connects to your vehicle or opens your trip database.
+
+For UI checks, use `--scenario zero`, `regen`, `charging`, `disconnected`, or `empty`, and optionally `--port 5051`.
 
 ---
 
