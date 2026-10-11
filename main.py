@@ -15,7 +15,7 @@ from flask import Flask, Response, jsonify, render_template, request
 # Import local modules
 from bluetooth_manager import BluetoothManager, BluetoothSerialConnection
 from config import load_config, save_config
-from ioniq_obd import IoniqData, IoniqOBD, SimulatorIoniqOBD
+from ioniq_obd import IoniqData, IoniqOBD
 from lcd_driver import LCDDriver
 from trip_logger import TripLogger
 
@@ -29,11 +29,10 @@ logger = logging.getLogger("ioniq_main")
 config = load_config()
 lcd = LCDDriver()
 trip_logger = TripLogger()
-sim_obd = SimulatorIoniqOBD()
 
-bt_conn: Optional = None
+bt_conn: Optional[BluetoothSerialConnection] = None
 live_obd: Optional[IoniqOBD] = None
-current_data: IoniqData = IoniqData()
+current_data: IoniqData = IoniqData(connected=False, status_text="Starting OBD...")
 data_lock = threading.Lock()
 running = True
 
@@ -45,25 +44,10 @@ app = Flask(__name__, template_folder="/home/rtivolle/ioniq_obd/templates")
 # -------------------------------------------------------------
 
 def obd_worker():
-    """Background worker to query OBD-II adapter or run simulator."""
+    """Background worker to query real OBD-II adapter over Bluetooth."""
     global current_data, bt_conn, live_obd, running
 
-    sim_obd.initialize_elm327()
-
     while running:
-        sim_mode = config.get("simulation_mode", True)
-        if sim_mode:
-            try:
-                sim_data = sim_obd.query_all()
-                with data_lock:
-                    current_data = sim_data
-                trip_logger.record_sample(sim_data.to_dict(), auto_manage=config.get("trip_auto_record", True))
-            except Exception as e:
-                logger.error("Simulation error: %s", e)
-            time.sleep(0.5)
-            continue
-
-        # Live OBD2 Mode
         mac = config.get("bluetooth_mac", "").strip()
         if not mac:
             with data_lock:
@@ -215,7 +199,6 @@ def api_bluetooth_connect():
     config["bluetooth_name"] = name or mac
     config["bluetooth_pin"] = pin
     config["auto_connect"] = True
-    config["simulation_mode"] = False
     save_config(config)
 
     # Attempt RFCOMM connection

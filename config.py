@@ -12,7 +12,6 @@ DEFAULT_CONFIG = {
     "bluetooth_name": "",
     "bluetooth_pin": "1234",
     "auto_connect": True,
-    "simulation_mode": True,  # Default to simulation until user connects their adapter
     "lcd_auto_cycle": True,
     "lcd_cycle_seconds": 4,
     "lcd_line1": "soc",

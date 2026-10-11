@@ -91,7 +91,6 @@
   <header>
     <h1><span>⚡</span> Hyundai Ioniq 2017 OBD2 & LCD</h1>
     <div class="status-badges">
-      <span id="badge-mode" class="badge badge-info">Mode: Live</span>
       <span id="badge-bt" class="badge badge-danger">BT: Disconnected</span>
       <span id="badge-trip" class="badge badge-warning">Trip: Idle</span>
     </div>
@@ -236,17 +235,6 @@
     <div id="tab-bluetooth" class="tab-content">
       <div class="card" style="margin-bottom: 20px;">
         <h2 style="font-size: 1.1rem; margin-bottom: 10px;">OBD-II Connection Settings</h2>
-        
-        <div class="switch-container">
-          <div>
-            <strong>Simulation / Demo Mode</strong>
-            <div style="color: var(--text-muted); font-size: 0.85rem;">Simulates live Hyundai Ioniq driving data without needing car connection</div>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="cfg-sim-mode" onchange="updateSimMode()">
-            <span class="slider"></span>
-          </label>
-        </div>
 
         <div class="switch-container">
           <div>
@@ -371,15 +359,6 @@
         const lcd = data.lcd || {};
 
         // Badges
-        const bMode = document.getElementById('badge-mode');
-        if (cfg.simulation_mode) {
-          bMode.innerText = "Mode: Demo Sim";
-          bMode.className = "badge badge-info";
-        } else {
-          bMode.innerText = "Mode: Live OBD2";
-          bMode.className = "badge badge-success";
-        }
-
         const bBt = document.getElementById('badge-bt');
         if (obd.connected) {
           bBt.innerText = "BT: Connected";
@@ -452,7 +431,6 @@
     async function loadConfig() {
       const res = await fetch('/api/config');
       const cfg = await res.json();
-      document.getElementById('cfg-sim-mode').checked = cfg.simulation_mode;
       document.getElementById('cfg-auto-connect').checked = cfg.auto_connect;
       document.getElementById('cfg-pin').value = cfg.bluetooth_pin || "1234";
       document.getElementById('lcd-auto-cycle').checked = cfg.lcd_auto_cycle;
@@ -490,16 +468,6 @@
     async function clearLCD() {
       await fetch('/api/lcd/clear', { method: 'POST' });
       showToast("Screen cleared");
-    }
-
-    async function updateSimMode() {
-      const val = document.getElementById('cfg-sim-mode').checked;
-      await fetch('/api/config', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ simulation_mode: val })
-      });
-      showToast(val ? "Simulator mode enabled" : "Live OBD2 mode enabled");
     }
 
     async function updateAutoConnect() {

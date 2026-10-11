@@ -31,7 +31,6 @@ A lightweight, dedicated Raspberry Pi monitoring system for the **Hyundai Ioniq 
   - Dark mode web UI served on port `5000`.
   - Works completely offline in the car without internet connectivity.
   - Live virtual mirror of the physical LCD screen.
-  - Built-in simulation / demo mode for bench testing.
 
 ---
 
@@ -103,7 +102,7 @@ sudo journalctl -u ioniq-obd -f
    - **Local Network**: `http://<raspberry-pi-ip>:5000` (or `http://rspi3b.local:5000`)
 2. Navigate to the **"Bluetooth & OBD"** tab.
 3. Click **"Scan for Bluetooth Adapters"**, find your ELM327 dongle, and click **"Pair & Connect"**.
-4. Disable **"Simulation Mode"** once paired to start streaming live vehicle CAN bus data.
+4. The system will connect and begin streaming live vehicle CAN bus data and logging trips.
 
 ---
 
