@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hyundai Ioniq 2017 OBD2 & LCD Manager</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --lcd-bg: #0284c7;
+      --lcd-text: #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding-bottom: 60px; }
+    header { background: #090d16; border-bottom: 1px solid var(--border); padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    header h1 { font-size: 1.25rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }
+    .status-badges { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .badge { font-size: 0.75rem; padding: 4px 10px; border-radius: 9999px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .badge-success { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+    .badge-warning { background: #451a03; color: #fcd34d; border: 1px solid #92400e; }
+    .badge-danger { background: #450a0a; color: #f87171; border: 1px solid #991b1b; }
+    .badge-info { background: #082f49; color: #38bdf8; border: 1px solid #0369a1; }
+
+    /* Tabs */
+    .tabs { display: flex; border-bottom: 1px solid var(--border); background: #131d2e; overflow-x: auto; }
+    .tab-btn { background: none; border: none; color: var(--text-muted); padding: 14px 20px; font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); background: rgba(56, 189, 248, 0.05); }
+
+    .container { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Grid */
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
+    .card-title { font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .card-value { font-size: 2rem; font-weight: 800; color: #fff; line-height: 1.2; }
+    .card-sub { font-size: 0.85rem; color: var(--text-muted); margin-top: 6px; }
+
+    /* Custom highlight colors */
+    .val-regen { color: var(--success) !important; }
+    .val-power { color: #f97316 !important; }
+    .val-soc { color: var(--primary) !important; }
+
+    /* LCD Virtual Display */
+    .lcd-preview-card { background: #000; border: 4px solid #334155; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center; }
+    .lcd-screen { display: inline-block; background-color: #0c4a6e; color: #f0f9ff; font-family: "Courier New", Courier, monospace; font-size: 1.5rem; font-weight: 700; padding: 16px 24px; border-radius: 6px; letter-spacing: 0.15em; box-shadow: inset 0 0 15px rgba(0,0,0,0.6); text-shadow: 0 0 5px rgba(255,255,255,0.7); min-width: 320px; text-align: left; }
+    .lcd-line { white-space: pre; line-height: 1.4; }
+
+    /* Forms & Tables */
+    .btn { background: var(--primary); color: #0f172a; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: background 0.15s; font-size: 0.9rem; }
+    .btn:hover { background: var(--primary-hover); }
+    .btn-secondary { background: #334155; color: #fff; }
+    .btn-secondary:hover { background: #475569; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #16a34a; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; font-weight: 600; }
+    input[type="text"], input[type="number"], select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: #fff; font-size: 0.95rem; }
+    .table-container { overflow-x: auto; margin-top: 15px; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+    th { background: #131d2e; padding: 10px 14px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 14px; border-bottom: 1px solid #233145; }
+    tr:hover { background: rgba(255,255,255,0.02); }
+
+    .switch-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .switch { position: relative; display: inline-block; width: 48px; height: 26px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .3s; border-radius: 26px; }
+    .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+    input:checked + .slider { background-color: var(--primary); }
+    input:checked + .slider:before { transform: translateX(22px); }
+
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #0284c7; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: none; z-index: 1000; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1><span>⚡</span> Hyundai Ioniq 2017 OBD2 & LCD</h1>
+    <div class="status-badges">
+      <span id="badge-mode" class="badge badge-info">Mode: Live</span>
+      <span id="badge-bt" class="badge badge-danger">BT: Disconnected</span>
+      <span id="badge-trip" class="badge badge-warning">Trip: Idle</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+    <button class="tab-btn" onclick="switchTab('lcd')">📟 1602A LCD Screen</button>
+    <button class="tab-btn" onclick="switchTab('bluetooth')">📡 Bluetooth & OBD</button>
+    <button class="tab-btn" onclick="switchTab('trips')">🛣️ Trip Logs</button>
+  </nav>
+
+  <div class="container">
+
+    <!-- TAB 1: LIVE DASHBOARD -->
+    <div id="tab-dashboard" class="tab-content active">
+      <div class="grid">
+        <div class="card">
+          <div class="card-title">State of Charge (SOC)</div>
+          <div class="card-value val-soc" id="val-soc">-- %</div>
+          <div class="card-sub">BMS: <span id="val-soc-bms">--</span>% | SOH: <span id="val-soh">--</span>%</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Instant Power</div>
+          <div class="card-value" id="val-power">-- kW</div>
+          <div class="card-sub" id="sub-power">Max Regen: -- kW | Max: -- kW</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Vehicle Speed</div>
+          <div class="card-value" id="val-speed">-- km/h</div>
+          <div class="card-sub">Motor RPM: <span id="val-rpm">--</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">High Voltage Battery</div>
+          <div class="card-value" id="val-voltage">-- V</div>
+          <div class="card-sub">Current: <span id="val-current">--</span> A</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Auxiliary 12V Battery</div>
+          <div class="card-value" id="val-aux">-- V</div>
+          <div class="card-sub" id="sub-aux">Electronics & DC-DC System</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Battery Temperature</div>
+          <div class="card-value" id="val-temp">-- °C</div>
+          <div class="card-sub">Min: <span id="val-temp-min">--</span>°C | Max: <span id="val-temp-max">--</span>°C</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 10px;">
+        <div class="card-title">Active Trip Quick View</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+          <div>
+            <span style="font-size: 1.3rem; font-weight: 700;" id="trip-live-dist">0.0 km</span>
+            <span style="color: var(--text-muted); margin: 0 10px;">|</span>
+            <span style="font-size: 1.1rem;" id="trip-live-kwh">0.0 kWh</span>
+            <span style="color: var(--text-muted); margin: 0 10px;">|</span>
+            <span style="font-size: 1.1rem;" id="trip-live-eff">-- kWh/100km</span>
+          </div>
+          <div>
+            <button class="btn btn-success" id="btn-quick-trip" onclick="toggleTrip()">Start Trip</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: LCD 1602A SCREEN -->
+    <div id="tab-lcd" class="tab-content">
+      <div class="card">
+        <h2 style="font-size: 1.1rem; margin-bottom: 6px;">Live Physical 1602A LCD Mirror</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem;">This represents the exact text currently visible on your vehicle's physical 1602A screen.</p>
+        
+        <div class="lcd-preview-card">
+          <div class="lcd-screen">
+            <div class="lcd-line" id="lcd-preview-1">                </div>
+            <div class="lcd-line" id="lcd-preview-2">                </div>
+          </div>
+        </div>
+
+        <div class="switch-container">
+          <div>
+            <strong>Auto-Cycle Multi-Page Mode</strong>
+            <div style="color: var(--text-muted); font-size: 0.85rem;">Automatically rotates pages every few seconds</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="lcd-auto-cycle" onchange="updateLCDConfig()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 16px;">
+          <div class="form-group">
+            <label>Cycle Interval (Seconds)</label>
+            <input type="number" id="lcd-cycle-seconds" min="2" max="30" value="4" onchange="updateLCDConfig()">
+          </div>
+          <div class="form-group">
+            <label>Manual Line 1 Metric</label>
+            <select id="lcd-line1" onchange="updateLCDConfig()">
+              <option value="soc">Battery SOC (%)</option>
+              <option value="power">Instant Power (kW)</option>
+              <option value="speed">Vehicle Speed (km/h)</option>
+              <option value="voltage">HV Voltage (V)</option>
+              <option value="current">Current (A)</option>
+              <option value="aux">Aux 12V Battery (V)</option>
+              <option value="temp">Battery Temp (°C)</option>
+              <option value="trip_dist">Trip Distance (km)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Manual Line 2 Metric</label>
+          <select id="lcd-line2" onchange="updateLCDConfig()">
+            <option value="power">Instant Power (kW)</option>
+            <option value="soc">Battery SOC (%)</option>
+            <option value="speed">Vehicle Speed (km/h)</option>
+            <option value="voltage">HV Voltage (V)</option>
+            <option value="aux">Aux 12V Battery (V)</option>
+            <option value="temp">Battery Temp (°C)</option>
+            <option value="soh">State of Health (%)</option>
+            <option value="trip_time">Trip Duration</option>
+          </select>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid var(--border); margin: 20px 0;">
+
+        <h3 style="font-size: 0.95rem; margin-bottom: 10px;">Send Custom Temporary Message</h3>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="custom-lcd-text" placeholder="e.g. Range: 185km\nReady to drive" style="flex: 1;">
+          <button class="btn" onclick="sendCustomLCD()">Show on Screen</button>
+          <button class="btn btn-secondary" onclick="clearLCD()">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: BLUETOOTH & OBD -->
+    <div id="tab-bluetooth" class="tab-content">
+      <div class="card" style="margin-bottom: 20px;">
+        <h2 style="font-size: 1.1rem; margin-bottom: 10px;">OBD-II Connection Settings</h2>
+        
+        <div class="switch-container">
+          <div>
+            <strong>Simulation / Demo Mode</strong>
+            <div style="color: var(--text-muted); font-size: 0.85rem;">Simulates live Hyundai Ioniq driving data without needing car connection</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="cfg-sim-mode" onchange="updateSimMode()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="switch-container">
+          <div>
+            <strong>Auto-Connect on Startup</strong>
+            <div style="color: var(--text-muted); font-size: 0.85rem;">Automatically reconnects to remembered OBD adapter on boot</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="cfg-auto-connect" onchange="updateAutoConnect()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>Remembered Device</label>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="cfg-mac" readonly placeholder="No device remembered">
+            <button class="btn btn-danger" onclick="forgetDevice()">Forget</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Bluetooth Pairing PIN</label>
+          <input type="text" id="cfg-pin" value="1234" style="max-width: 150px;">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <button class="btn" id="btn-scan" onclick="scanBluetooth()">🔍 Scan for Bluetooth Adapters</button>
+          <button class="btn btn-secondary" onclick="reconnectBT()">⚡ Connect Remembered</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="font-size: 1.1rem; margin-bottom: 10px;">Discovered Bluetooth Devices</h2>
+        <div id="scan-status" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px;">Click 'Scan' to search for nearby OBD2 adapters.</div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Device Name</th>
+                <th>MAC Address</th>
+                <th>Signal</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="bt-device-list">
+              <tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No devices scanned yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: TRIP LOGS -->
+    <div id="tab-trips" class="tab-content">
+      <div class="card" style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h2 style="font-size: 1.1rem;">Trip Recorder</h2>
+            <div style="color: var(--text-muted); font-size: 0.85rem;">Automatically records energy consumption, regen, and speed.</div>
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-success" id="btn-trip-control" onclick="toggleTrip()">Start New Trip</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="font-size: 1.1rem; margin-bottom: 10px;">Trip History</h2>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Trip ID</th>
+                <th>Date & Time</th>
+                <th>Distance</th>
+                <th>Net Energy</th>
+                <th>Efficiency</th>
+                <th>Max Speed</th>
+                <th>SOC Range</th>
+                <th>Export</th>
+              </tr>
+            </thead>
+            <tbody id="trip-history-list">
+              <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Loading trips...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="toast" class="toast">Action completed</div>
+
+  <script>
+    let activeTrip = false;
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 3000);
+    }
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('tab-' + name).classList.add('active');
+      if (name === 'trips') loadTrips();
+    }
+
+    // Periodic telemetry update
+    async function updateStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        const obd = data.obd || {};
+        const trip = data.trip || {};
+        const cfg = data.config || {};
+        const lcd = data.lcd || {};
+
+        // Badges
+        const bMode = document.getElementById('badge-mode');
+        if (cfg.simulation_mode) {
+          bMode.innerText = "Mode: Demo Sim";
+          bMode.className = "badge badge-info";
+        } else {
+          bMode.innerText = "Mode: Live OBD2";
+          bMode.className = "badge badge-success";
+        }
+
+        const bBt = document.getElementById('badge-bt');
+        if (obd.connected) {
+          bBt.innerText = "BT: Connected";
+          bBt.className = "badge badge-success";
+        } else {
+          bBt.innerText = "BT: " + (obd.status_text || "Disconnected");
+          bBt.className = "badge badge-danger";
+        }
+
+        const bTrip = document.getElementById('badge-trip');
+        activeTrip = trip.active;
+        if (trip.active) {
+          bTrip.innerText = "Trip #" + trip.trip_id + " (" + trip.distance_km + " km)";
+          bTrip.className = "badge badge-success";
+          document.getElementById('btn-quick-trip').innerText = "Stop Trip";
+          document.getElementById('btn-quick-trip').className = "btn btn-danger";
+          document.getElementById('btn-trip-control').innerText = "Stop Current Trip";
+          document.getElementById('btn-trip-control').className = "btn btn-danger";
+        } else {
+          bTrip.innerText = "Trip: Idle";
+          bTrip.className = "badge badge-warning";
+          document.getElementById('btn-quick-trip').innerText = "Start Trip";
+          document.getElementById('btn-quick-trip').className = "btn btn-success";
+          document.getElementById('btn-trip-control').innerText = "Start New Trip";
+          document.getElementById('btn-trip-control').className = "btn btn-success";
+        }
+
+        // Live metrics
+        const socVal = obd.soc_display || obd.soc_bms || 0;
+        document.getElementById('val-soc').innerText = socVal.toFixed(1) + " %";
+        document.getElementById('val-soc-bms').innerText = (obd.soc_bms || 0).toFixed(1);
+        document.getElementById('val-soh').innerText = (obd.soh || 100).toFixed(1);
+
+        const pwr = obd.battery_power_kw || 0;
+        const pwrEl = document.getElementById('val-power');
+        pwrEl.innerText = (pwr > 0 ? "+" : "") + pwr.toFixed(1) + " kW";
+        pwrEl.className = "card-value " + (pwr < -0.5 ? "val-regen" : (pwr > 5 ? "val-power" : ""));
+        document.getElementById('sub-power').innerText = "Max Regen: " + (obd.max_charge_power_kw || 0) + " kW | Max Disch: " + (obd.max_discharge_power_kw || 0) + " kW";
+
+        document.getElementById('val-speed').innerText = Math.round(obd.speed_kmh || 0) + " km/h";
+        document.getElementById('val-rpm').innerText = obd.motor_rpm || 0;
+
+        document.getElementById('val-voltage').innerText = (obd.battery_voltage || 0).toFixed(1) + " V";
+        document.getElementById('val-current').innerText = (obd.battery_current || 0).toFixed(1);
+
+        document.getElementById('val-aux').innerText = (obd.aux_voltage || 0).toFixed(1) + " V";
+        document.getElementById('val-temp').innerText = (obd.battery_max_temp || 0) + " °C";
+        document.getElementById('val-temp-min').innerText = obd.battery_min_temp || 0;
+        document.getElementById('val-temp-max').innerText = obd.battery_max_temp || 0;
+
+        // Trip quick view
+        document.getElementById('trip-live-dist').innerText = (trip.distance_km || 0).toFixed(2) + " km";
+        document.getElementById('trip-live-kwh').innerText = (trip.net_kwh || 0).toFixed(2) + " kWh";
+        document.getElementById('trip-live-eff').innerText = (trip.efficiency_kwh_100km > 0 ? trip.efficiency_kwh_100km.toFixed(1) + " kWh/100km" : "-- kWh/100km");
+
+        // LCD Preview mirror
+        document.getElementById('lcd-preview-1').innerText = lcd.line1 || "                ";
+        document.getElementById('lcd-preview-2').innerText = lcd.line2 || "                ";
+
+        // Remembered device
+        if (cfg.bluetooth_mac) {
+          document.getElementById('cfg-mac').value = (cfg.bluetooth_name || "Device") + " (" + cfg.bluetooth_mac + ")";
+        }
+
+      } catch (err) {
+        console.warn("Poll status error:", err);
+      }
+    }
+
+    async function loadConfig() {
+      const res = await fetch('/api/config');
+      const cfg = await res.json();
+      document.getElementById('cfg-sim-mode').checked = cfg.simulation_mode;
+      document.getElementById('cfg-auto-connect').checked = cfg.auto_connect;
+      document.getElementById('cfg-pin').value = cfg.bluetooth_pin || "1234";
+      document.getElementById('lcd-auto-cycle').checked = cfg.lcd_auto_cycle;
+      document.getElementById('lcd-cycle-seconds').value = cfg.lcd_cycle_seconds || 4;
+      document.getElementById('lcd-line1').value = cfg.lcd_line1 || "soc";
+      document.getElementById('lcd-line2').value = cfg.lcd_line2 || "power";
+    }
+
+    async function updateLCDConfig() {
+      const payload = {
+        lcd_auto_cycle: document.getElementById('lcd-auto-cycle').checked,
+        lcd_cycle_seconds: parseInt(document.getElementById('lcd-cycle-seconds').value),
+        lcd_line1: document.getElementById('lcd-line1').value,
+        lcd_line2: document.getElementById('lcd-line2').value
+      };
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      showToast("LCD settings updated");
+    }
+
+    async function sendCustomLCD() {
+      const text = document.getElementById('custom-lcd-text').value;
+      if (!text) return;
+      await fetch('/api/lcd/message', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ message: text, duration: 10 })
+      });
+      showToast("Sent message to 1602A screen");
+    }
+
+    async function clearLCD() {
+      await fetch('/api/lcd/clear', { method: 'POST' });
+      showToast("Screen cleared");
+    }
+
+    async function updateSimMode() {
+      const val = document.getElementById('cfg-sim-mode').checked;
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ simulation_mode: val })
+      });
+      showToast(val ? "Simulator mode enabled" : "Live OBD2 mode enabled");
+    }
+
+    async function updateAutoConnect() {
+      const val = document.getElementById('cfg-auto-connect').checked;
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ auto_connect: val })
+      });
+      showToast("Auto-connect updated");
+    }
+
+    async function scanBluetooth() {
+      const btn = document.getElementById('btn-scan');
+      const status = document.getElementById('scan-status');
+      btn.disabled = true;
+      status.innerText = "Scanning nearby Bluetooth devices (takes ~6 seconds)...";
+      try {
+        const res = await fetch('/api/bluetooth/scan');
+        const list = await res.json();
+        const tbody = document.getElementById('bt-device-list');
+        tbody.innerHTML = '';
+        if (list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No Bluetooth devices found nearby. Ensure adapter is plugged into OBD port with ignition ON.</td></tr>';
+        } else {
+          list.forEach(dev => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td><strong>${dev.name}</strong></td>
+              <td><code>${dev.mac}</code></td>
+              <td>${dev.rssi || 'N/A'}</td>
+              <td>${dev.paired ? '<span class="badge badge-success">Paired</span>' : '<span class="badge badge-warning">Unpaired</span>'}</td>
+              <td>
+                <button class="btn btn-primary" onclick="connectDevice('${dev.mac}', '${dev.name.replace("'", "")}')">Pair & Connect</button>
+              </td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+        status.innerText = `Found ${list.length} devices.`;
+      } catch (e) {
+        status.innerText = "Scan failed: " + e;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function connectDevice(mac, name) {
+      const pin = document.getElementById('cfg-pin').value || "1234";
+      showToast(`Connecting to ${name}...`);
+      const res = await fetch('/api/bluetooth/connect', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ mac, name, pin })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast("Connected & remembered!");
+      } else {
+        alert("Connection result: " + data.message);
+      }
+    }
+
+    async function reconnectBT() {
+      showToast("Connecting to remembered device...");
+      const res = await fetch('/api/bluetooth/reconnect', { method: 'POST' });
+      const data = await res.json();
+      showToast(data.message);
+    }
+
+    async function forgetDevice() {
+      if (!confirm("Forget remembered Bluetooth device?")) return;
+      await fetch('/api/bluetooth/forget', { method: 'POST' });
+      document.getElementById('cfg-mac').value = "";
+      showToast("Device forgotten");
+    }
+
+    async function toggleTrip() {
+      if (activeTrip) {
+        const res = await fetch('/api/trips/stop', { method: 'POST' });
+        const data = await res.json();
+        showToast("Trip stopped");
+      } else {
+        const res = await fetch('/api/trips/start', { method: 'POST' });
+        const data = await res.json();
+        showToast("Trip started");
+      }
+      loadTrips();
+    }
+
+    async function loadTrips() {
+      try {
+        const res = await fetch('/api/trips');
+        const list = await res.json();
+        const tbody = document.getElementById('trip-history-list');
+        tbody.innerHTML = '';
+        if (list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center;">No recorded trips yet.</td></tr>';
+          return;
+        }
+        list.forEach(t => {
+          const eff = (t.net_kwh > 0 && t.distance_km > 0.1) ? (t.net_kwh / t.distance_km * 100).toFixed(1) + " kWh/100km" : "--";
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>#${t.id}</td>
+            <td>${t.start_time || 'N/A'}</td>
+            <td><strong>${(t.distance_km || 0).toFixed(2)} km</strong></td>
+            <td>${(t.net_kwh || 0).toFixed(2)} kWh</td>
+            <td>${eff}</td>
+            <td>${(t.max_speed_kmh || 0).toFixed(0)} km/h</td>
+            <td>${t.start_soc || 0}% → ${t.end_soc || 0}%</td>
+            <td>
+              <a href="/api/trips/${t.id}/csv" download="trip_${t.id}.csv" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.8rem; text-decoration: none;">Download CSV</a>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.error("Error loading trips:", e);
+      }
+    }
+
+    // Initialize
+    loadConfig();
+    updateStatus();
+    setInterval(updateStatus, 1000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.db
+*.sqlite3
+trips.db
+config.json
+.venv/
+env/
+venv/
+.lgd-nfy*
+*.log

@@ -1,0 +1,17 @@
+[Unit]
+Description=Hyundai Ioniq 2017 OBD2 & 1602A LCD Web Service
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=rtivolle
+WorkingDirectory=/home/rtivolle/ioniq_obd
+ExecStart=/home/rtivolle/.venv/bin/python /home/rtivolle/ioniq_obd/main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
