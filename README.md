@@ -109,3 +109,44 @@ sudo journalctl -u ioniq-obd -f
 ## License
 
 MIT License.
+
+## Data validity and session recovery
+
+Each telemetry field has `fresh` and `metric_updated_at` metadata in
+`/api/status`. Failed or missing payloads invalidate their fields immediately;
+fields also expire after 10 seconds. Unavailable values are JSON `null`, rather
+than zero or an old reading. Three consecutive polls without fresh speed,
+battery power, and charging flags cause the worker to reconnect (when automatic
+connection is enabled). Only the OBD worker owns Bluetooth I/O; web operations
+are queued between polls, including scanning, pairing, reconnecting, forgetting,
+and `/api/bluetooth/disconnect`.
+
+Automatic driving trips start above 2 km/h. Stationary battery consumption does
+not start a trip. Stationary charging indicated by the BMS ends the driving trip
+and records a separate charging session. Motion takes priority over the charging
+flag, so regenerative braking remains driving energy. `/api/charging` returns
+charging history with battery energy added, recorded duration, and SOC change.
+Energy added measures battery-side power, not electricity drawn at the wall.
+Manual trip recording is refused during charging or unavailable telemetry.
+
+Samples and trip totals commit together in SQLite on every valid poll. Charging
+totals are also checkpointed every valid poll. On startup, unfinished sessions
+are retained as `interrupted`, ending at their last checkpoint; the next session
+starts separately. Missing-data intervals and time powered off are excluded from
+energy and distance integration. Charging duration counts valid sample intervals.
+Existing databases receive an additive migration automatically. Back up
+`trips.db` before upgrading. Old sessions without checkpoints retain their
+previously saved totals. Durability depends on the Pi storage surviving power
+loss; no application can recover a physically corrupted SD card.
+
+For local testing, `IONIQ_DB_PATH` overrides the default database location.
+Run the regression checks with `python3 -m unittest discover -s tests -v`.
+
+## Vehicle diagnostics
+
+The Connection tab offers read-only ECU/fault reports and expanded battery
+snapshots for the confirmed 2017 Ioniq Electric 28 kWh Canadian profile. Standard
+fault clearing saves a fresh report and requires an explicit operator confirmation
+before Mode 04. Community battery definitions remain unvalidated on the physical
+vehicle; unsupported ECU services and actuator controls stay unavailable.
+See [diagnostic scope, sources, and validation](docs/DIAGNOSTICS.md).

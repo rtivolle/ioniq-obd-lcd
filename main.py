@@ -4,6 +4,10 @@ and Flask web service.
 """
 
 import logging
+import queue
+import copy
+import re
+from concurrent.futures import Future, TimeoutError
 import os
 import sys
 import threading
@@ -18,6 +22,7 @@ from config import load_config, save_config
 from ioniq_obd import IoniqData, IoniqOBD
 from lcd_driver import LCDDriver
 from trip_logger import TripLogger
+from diagnostics import Diagnostics
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,90 +33,157 @@ logger = logging.getLogger("ioniq_main")
 # State & objects
 config = load_config()
 lcd = LCDDriver()
-trip_logger = TripLogger()
+trip_logger = TripLogger(os.environ.get("IONIQ_DB_PATH", "/home/rtivolle/ioniq_obd/trips.db"))
+
+diagnostics = Diagnostics(trip_logger.db_path)
 
 bt_conn: Optional[BluetoothSerialConnection] = None
 live_obd: Optional[IoniqOBD] = None
 current_data: IoniqData = IoniqData(connected=False, status_text="Starting OBD...")
 data_lock = threading.Lock()
 running = True
+worker_requests = queue.Queue()
+worker_ready = threading.Event()
+manual_disconnect = False
 
-app = Flask(__name__, template_folder="/home/rtivolle/ioniq_obd/templates")
+app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
 
 
 # -------------------------------------------------------------
 # Background Workers
 # -------------------------------------------------------------
 
+def close_connection():
+    """Called exclusively by the OBD worker."""
+    global bt_conn, live_obd, current_data
+    if bt_conn:
+        bt_conn.close()
+    bt_conn = live_obd = None
+    with data_lock:
+        current_data = IoniqData(status_text="Data unavailable")
+    trip_logger.record_sample(current_data.to_dict())
+
+
+def connect_adapter(mac):
+    global bt_conn, live_obd
+    close_connection()
+    conn = BluetoothSerialConnection(mac=mac, channel=1, timeout=4.0)
+    if conn.connect():
+        obd = IoniqOBD(conn)
+        if obd.initialize_elm327():
+            bt_conn, live_obd = conn, obd
+            return True
+    conn.close()
+    return False
+
+
+def handle_worker_request(action, payload):
+    global manual_disconnect
+    if action == "scan" or action.startswith("diagnostic_"):
+        with data_lock:
+            current_data.metric_valid = {}
+        trip_logger.record_sample(IoniqData().to_dict())
+        if action == "scan":
+            return BluetoothManager.scan_devices(timeout=5)
+        if live_obd is None or bt_conn is None or not bt_conn.connected:
+            raise ConnectionError("Connect an adapter before running diagnostics")
+        if action == "diagnostic_read":
+            return diagnostics.read(live_obd)
+        if action == "diagnostic_expanded":
+            return diagnostics.expanded(live_obd)
+        if action == "diagnostic_prepare_clear":
+            return diagnostics.prepare_clear(live_obd)
+        if action == "diagnostic_clear":
+            return diagnostics.clear(live_obd, payload)
+        raise ValueError("Unsupported diagnostic operation")
+    close_connection()
+    if action in ("disconnect", "forget"):
+        manual_disconnect = True
+        if action == "forget":
+            mac = config.get("bluetooth_mac", "")
+            if mac:
+                BluetoothManager.remove_device(mac)
+            config.update(bluetooth_mac="", bluetooth_name="")
+            save_config(config)
+        return {"success": True, "message": "Disconnected" if action == "disconnect" else "Remembered device cleared"}
+    manual_disconnect = False
+    if action == "connect":
+        BluetoothManager.pair_and_trust(mac=payload["mac"], pin=payload["pin"])
+        config.update(bluetooth_mac=payload["mac"], bluetooth_name=payload["name"] or payload["mac"],
+                      bluetooth_pin=payload["pin"], auto_connect=True)
+        save_config(config)
+    mac = config.get("bluetooth_mac", "").strip()
+    success = bool(mac) and connect_adapter(mac)
+    return {"success": success, "message": "Connected and remembered" if success else "Could not connect to adapter"}
+
+
+def submit_worker_request(action, payload=None):
+    if not worker_ready.is_set():
+        return jsonify({"success": False, "message": "OBD worker unavailable"}), 503
+    future = Future()
+    worker_requests.put((action, payload or {}, future))
+    try:
+        return jsonify(future.result(timeout=55))
+    except TimeoutError:
+        if future.cancel():
+            message = "Request cancelled before execution"
+        else:
+            message = "Bluetooth operation still running; check status"
+        return jsonify({"success": False, "message": message}), 503
+    except Exception as exc:
+        logger.exception("Bluetooth operation failed")
+        return jsonify({"success": False, "message": str(exc)}), 503
+
+
 def obd_worker():
-    """Background worker to query real OBD-II adapter over Bluetooth."""
-    global current_data, bt_conn, live_obd, running
-
-    while running:
-        mac = config.get("bluetooth_mac", "").strip()
-        if not mac:
-            with data_lock:
-                current_data = IoniqData(connected=False, status_text="No MAC set")
-            time.sleep(2.0)
-            continue
-
-        if bt_conn is None or not bt_conn.connected:
-            if not config.get("auto_connect", True):
-                with data_lock:
-                    current_data = IoniqData(connected=False, status_text="Auto-connect off")
-                time.sleep(2.0)
-                continue
-
-            with data_lock:
-                current_data = IoniqData(connected=False, status_text="Connecting BT...")
-            logger.info("Attempting auto-connect to %s...", mac)
-
+    """Sole owner of pairing, connection lifecycle and adapter I/O."""
+    global current_data
+    worker_ready.set()
+    retry_at = 0.0
+    try:
+        while running:
             try:
-                conn = BluetoothSerialConnection(mac=mac, channel=1, timeout=3.0)
-                if conn.connect():
-                    bt_conn = conn
-                    live_obd = IoniqOBD(bt_conn)
-                    if not live_obd.initialize_elm327():
-                        logger.warning("ELM327 initialization failed, closing connection.")
-                        bt_conn.close()
-                        bt_conn = None
-                        live_obd = None
-                else:
-                    bt_conn = None
-                    live_obd = None
-                    time.sleep(3.0)
-                    continue
-            except Exception as e:
-                logger.error("BT connect error: %s", e)
-                bt_conn = None
-                live_obd = None
-                time.sleep(3.0)
-                continue
-
-        # Connected to ELM327 - poll data
-        try:
-            polled = live_obd.query_all()
-            with data_lock:
-                current_data = polled
-            if polled.connected:
-                trip_logger.record_sample(polled.to_dict(), auto_manage=config.get("trip_auto_record", True))
+                action, payload, future = worker_requests.get(timeout=0.3)
+            except queue.Empty:
+                pass
             else:
-                # Connection dropped
-                logger.warning("OBD reported disconnected, resetting BT connection.")
-                if bt_conn:
-                    bt_conn.close()
-                bt_conn = None
-                live_obd = None
-                time.sleep(2.0)
-        except Exception as e:
-            logger.error("OBD poll error: %s", e)
-            if bt_conn:
-                bt_conn.close()
-            bt_conn = None
-            live_obd = None
-            time.sleep(2.0)
-
-        time.sleep(0.3)
+                if future.set_running_or_notify_cancel():
+                    try:
+                        future.set_result(handle_worker_request(action, payload))
+                    except Exception as exc:
+                        future.set_exception(exc)
+                retry_at = time.monotonic() + 3
+                continue
+            mac = config.get("bluetooth_mac", "").strip()
+            if bt_conn is None:
+                if manual_disconnect or not mac or not config.get("auto_connect", True):
+                    continue
+                if time.monotonic() < retry_at:
+                    continue
+                try:
+                    connect_adapter(mac)
+                except Exception:
+                    logger.exception("BT connect error")
+                    close_connection()
+                retry_at = time.monotonic() + 3
+                if live_obd is None:
+                    continue
+            try:
+                polled = live_obd.query_all()
+                with data_lock:
+                    # Publish a separate object so later polls cannot mutate the snapshot.
+                    current_data = copy.deepcopy(polled)
+                trip_logger.record_sample(polled.to_dict(), auto_manage=config.get("trip_auto_record", True))
+                if live_obd.reconnect_required:
+                    close_connection()
+                    retry_at = time.monotonic() + 3
+            except Exception:
+                logger.exception("OBD poll error")
+                close_connection()
+                retry_at = time.monotonic() + 3
+    finally:
+        worker_ready.clear()
+        close_connection()
 
 
 def lcd_worker():
@@ -159,6 +231,8 @@ def api_config():
     global config
     if request.method == "POST":
         new_data = request.json or {}
+        if any(key in new_data for key in ("bluetooth_mac", "bluetooth_name", "bluetooth_pin")):
+            return jsonify({"success": False, "message": "Use Bluetooth connect/forget endpoints to change the device"}), 400
         config.update(new_data)
         save_config(config)
         return jsonify({"success": True, "config": config})
@@ -167,97 +241,76 @@ def api_config():
 
 @app.route("/api/bluetooth/scan")
 def api_bluetooth_scan():
-    devices = BluetoothManager.scan_devices(timeout=5)
-    return jsonify(devices)
+    return submit_worker_request("scan")
 
 
 @app.route("/api/bluetooth/connect", methods=["POST"])
 def api_bluetooth_connect():
-    global bt_conn, live_obd
     data = request.json or {}
-    mac = data.get("mac", "").strip().upper()
-    name = data.get("name", "").strip()
-    pin = data.get("pin", "1234").strip()
-
-    if not mac:
-        return jsonify({"success": False, "message": "No MAC specified"}), 400
-
-    # Disconnect any existing live connection
-    if bt_conn:
-        try:
-            bt_conn.close()
-        except Exception:
-            pass
-        bt_conn = None
-        live_obd = None
-
-    # Pair & trust
-    pair_result = BluetoothManager.pair_and_trust(mac=mac, pin=pin)
-
-    # Save to config to remember
-    config["bluetooth_mac"] = mac
-    config["bluetooth_name"] = name or mac
-    config["bluetooth_pin"] = pin
-    config["auto_connect"] = True
-    save_config(config)
-
-    # Attempt RFCOMM connection
-    conn = BluetoothSerialConnection(mac=mac, channel=1, timeout=4.0)
-    if conn.connect():
-        bt_conn = conn
-        live_obd = IoniqOBD(bt_conn)
-        live_obd.initialize_elm327()
-        return jsonify({"success": True, "message": f"Connected and remembered {name or mac}."})
-    else:
-        return jsonify({
-            "success": False,
-            "message": f"Pairing returned: {pair_result.get('message')}, but RFCOMM connection failed. Ensure OBD2 adapter is powered and vehicle is ON."
-        })
+    mac = str(data.get("mac", "")).strip().upper()
+    if not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac):
+        return jsonify({"success": False, "message": "Invalid MAC address"}), 400
+    return submit_worker_request("connect", {
+        "mac": mac, "name": str(data.get("name", "")).strip(),
+        "pin": str(data.get("pin", "1234")).strip()})
 
 
 @app.route("/api/bluetooth/reconnect", methods=["POST"])
 def api_bluetooth_reconnect():
-    global bt_conn, live_obd
-    mac = config.get("bluetooth_mac", "").strip()
-    if not mac:
+    if not config.get("bluetooth_mac"):
         return jsonify({"success": False, "message": "No device remembered"}), 400
+    return submit_worker_request("reconnect")
 
-    if bt_conn:
-        try:
-            bt_conn.close()
-        except Exception:
-            pass
-        bt_conn = None
-        live_obd = None
 
-    conn = BluetoothSerialConnection(mac=mac, channel=1, timeout=4.0)
-    if conn.connect():
-        bt_conn = conn
-        live_obd = IoniqOBD(bt_conn)
-        live_obd.initialize_elm327()
-        return jsonify({"success": True, "message": f"Reconnected to {mac}."})
-    return jsonify({"success": False, "message": f"Could not connect to {mac}."})
+@app.route("/api/bluetooth/disconnect", methods=["POST"])
+def api_bluetooth_disconnect():
+    return submit_worker_request("disconnect")
 
 
 @app.route("/api/bluetooth/forget", methods=["POST"])
 def api_bluetooth_forget():
-    global bt_conn, live_obd
-    mac = config.get("bluetooth_mac", "")
-    if bt_conn:
-        try:
-            bt_conn.close()
-        except Exception:
-            pass
-        bt_conn = None
-        live_obd = None
+    return submit_worker_request("forget")
 
-    if mac:
-        BluetoothManager.remove_device(mac)
 
-    config["bluetooth_mac"] = ""
-    config["bluetooth_name"] = ""
-    save_config(config)
-    return jsonify({"success": True, "message": "Remembered device cleared"})
+@app.route("/api/diagnostics/read", methods=["POST"])
+def api_diagnostic_read():
+    return submit_worker_request("diagnostic_read")
+
+
+@app.route("/api/diagnostics/expanded", methods=["POST"])
+def api_diagnostic_expanded():
+    return submit_worker_request("diagnostic_expanded")
+
+
+@app.route("/api/diagnostics/prepare-clear", methods=["POST"])
+def api_diagnostic_prepare_clear():
+    return submit_worker_request("diagnostic_prepare_clear")
+
+
+@app.route("/api/diagnostics/clear", methods=["POST"])
+def api_diagnostic_clear():
+    data = request.json or {}
+    if data.get("confirm") is not True or data.get("conditions_confirmed") is not True:
+        return jsonify({"success": False, "message": "Explicit confirmation required"}), 400
+    return submit_worker_request("diagnostic_clear", data)
+
+
+@app.route("/api/diagnostics/reports")
+def api_diagnostic_reports():
+    return jsonify(diagnostics.reports())
+
+
+@app.route("/api/diagnostics/reports/<int:report_id>")
+def api_diagnostic_report(report_id):
+    report = diagnostics.report(report_id)
+    if report is None:
+        return jsonify({"success": False, "message": "Report not found"}), 404
+    return jsonify(report)
+
+
+@app.route("/api/charging")
+def api_charging():
+    return jsonify(trip_logger.get_charging_sessions())
 
 
 @app.route("/api/trips")
@@ -268,8 +321,14 @@ def api_trips():
 @app.route("/api/trips/start", methods=["POST"])
 def api_trips_start():
     with data_lock:
-        soc = current_data.soc_display or current_data.soc_bms or 0.0
-    trip_id = trip_logger.start_trip(current_soc=soc)
+        snapshot = current_data.to_dict()
+        soc = snapshot["soc_display"] if snapshot["soc_display"] is not None else snapshot["soc_bms"]
+        if snapshot["is_charging"] is None or snapshot["speed_kmh"] is None or (snapshot["is_charging"] and snapshot["speed_kmh"] <= 2):
+            return jsonify({"success": False, "message": "Fresh non-charging telemetry required"}), 409
+    try:
+        trip_id = trip_logger.start_trip(current_soc=soc)
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 409
     return jsonify({"success": True, "trip_id": trip_id})
 
 

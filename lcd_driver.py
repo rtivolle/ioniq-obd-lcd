@@ -74,6 +74,13 @@ class LCDDriver:
 
     def format_metric(self, key: str, obd_dict: Dict[str, Any], trip_dict: Dict[str, Any]) -> str:
         """Formats a single metric into a compact LCD-friendly string."""
+        metrics = {"soc": "soc_display", "power": "battery_power_kw", "speed": "speed_kmh",
+                   "voltage": "battery_voltage", "current": "battery_current", "aux": "aux_voltage",
+                   "temp": "battery_max_temp", "soh": "soh", "rpm": "motor_rpm"}
+        if key == "soc" and obd_dict.get("soc_display") is None:
+            obd_dict = dict(obd_dict, soc_display=obd_dict.get("soc_bms"))
+        if key in metrics and obd_dict.get(metrics[key]) is None:
+            return f"{key[:3].title()}:--"
         if key == "soc":
             val = obd_dict.get("soc_display", obd_dict.get("soc_bms", 0.0))
             return f"SOC:{val:4.1f}%"
@@ -132,27 +139,20 @@ class LCDDriver:
             self.show_message("OBD2 Waiting...", status[:16])
             return
 
+        if any(obd_dict.get(key) is None for key in ("speed_kmh", "battery_power_kw", "is_charging")):
+            self.show_message("Data unavailable", "Waiting for OBD")
+            return
+
         auto_cycle = config.get("lcd_auto_cycle", True)
         cycle_sec = max(2, config.get("lcd_cycle_seconds", 4))
 
         if auto_cycle:
             # Multi-page rotating view
+            metric = lambda key: self.format_metric(key, obd_dict, trip_dict)
             pages = [
-                # Page 0: Driving / Power
-                (
-                    f"SOC:{obd_dict.get('soc_display', 0.0):4.1f}% {obd_dict.get('battery_power_kw', 0.0):+5.1f}kW",
-                    f"Spd:{int(obd_dict.get('speed_kmh', 0)):3d}k {obd_dict.get('battery_voltage', 0.0):5.1f}V"
-                ),
-                # Page 1: Battery Health & 12V
-                (
-                    f"Aux:{obd_dict.get('aux_voltage', 0.0):4.1f}V T:{obd_dict.get('battery_max_temp', 0):2d}C",
-                    f"SOH:{obd_dict.get('soh', 100.0):4.1f}% I:{obd_dict.get('battery_current', 0.0):+5.1f}A"
-                ),
-                # Page 2: Trip Stats
-                (
-                    f"Dst:{trip_dict.get('distance_km', 0.0):4.1f}km Net:{trip_dict.get('net_kwh', 0.0):4.1f}k",
-                    f"Dur:{int(trip_dict.get('duration_sec', 0)) // 60:3d}m {obd_dict.get('status_text', 'Live')[:6]}"
-                ),
+                (f"{metric('soc')} {metric('power')}", f"{metric('speed')} {metric('voltage')}"),
+                (f"{metric('aux')} {metric('temp')}", f"{metric('soh')} {metric('current')}"),
+                (f"{metric('trip_dist')} {metric('trip_kwh')}", metric('trip_time')),
             ]
 
             if now - self.last_page_switch >= cycle_sec:
