@@ -101,7 +101,7 @@
   }
 
   function renderTelemetry(obd, available) {
-    const val = (key) => available && obd.fresh?.[key] !== false ? number(obd[key]) : null;
+    const val = (key) => (available || (obd.connected && obd.fresh?.[key] === true)) && obd.fresh?.[key] !== false ? number(obd[key]) : null;
     // Zero is a real reading, including at an empty battery or while parked.
     const soc = val('soc_display') ?? val('soc_bms');
     set('val-soc', format(soc));
