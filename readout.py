@@ -33,6 +33,11 @@ def fetch_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
         sys.exit(1)
 
 
+def format_value(value, spec=""):
+    """Display unavailable telemetry without inventing a numeric reading."""
+    return "Unavailable" if value is None else format(value, spec)
+
+
 def format_cell_grid(cells):
     if not cells:
         return f"{DIM}No cell voltages available{RESET}"
@@ -90,44 +95,44 @@ def main():
     print("-" * 68)
     gear_flags = readings.get("gear_flags") or {}
     active_gears = [g for g, active in gear_flags.items() if active]
-    gear_str = active_gears[0] if active_gears else "Park" if obd.get("speed_kmh", 0) == 0 else "Unknown"
+    gear_str = active_gears[0] if active_gears else "Park" if obd.get("speed_kmh") == 0 else "Unknown"
 
-    motor_rpm = readings.get("motor_rpm", obd.get("motor_rpm", 0))
-    pedal = readings.get("accelerator_pedal_pct", 0.0)
-    speed = obd.get("speed_kmh", 0.0)
+    motor_rpm = readings.get("motor_rpm") if readings.get("motor_rpm") is not None else obd.get("motor_rpm")
+    pedal = readings.get("accelerator_pedal_pct")
+    speed = obd.get("speed_kmh")
 
     print(f"  • Selector Position     : {BOLD}{gear_str}{RESET}")
-    print(f"  • Vehicle Speed         : {BOLD}{speed:.1f} km/h{RESET}")
-    print(f"  • Motor Speed (RPM)     : {BOLD}{motor_rpm} RPM{RESET}")
-    print(f"  • Accelerator Pedal     : {BOLD}{pedal:.1f} %{RESET}")
+    print(f"  • Vehicle Speed         : {BOLD}{format_value(speed, '.1f')} km/h{RESET}")
+    print(f"  • Motor Speed (RPM)     : {BOLD}{format_value(motor_rpm)} RPM{RESET}")
+    print(f"  • Accelerator Pedal     : {BOLD}{format_value(pedal, '.1f')}%{RESET}")
     print(f"  • Controller Protocol   : KWP2000 / ISO 15765-4 CAN (500 kbps)")
 
     # 2. Battery Management System (BMS)
     print(f"\n{BOLD}{CYAN}2. BATTERY MANAGEMENT SYSTEM (BMS / BECM - Header 7E4){RESET}")
     print("-" * 68)
-    soc_disp = obd.get("soc_display", 0.0)
-    soc_bms = obd.get("soc_bms", 0.0)
-    soh = obd.get("soh", 100.0)
-    hv_volt = obd.get("battery_voltage", 0.0)
-    hv_curr = obd.get("battery_current", 0.0)
-    hv_pwr = obd.get("battery_power_kw", 0.0)
-    max_chg = obd.get("max_charge_power_kw", 0.0)
-    max_dis = obd.get("max_discharge_power_kw", 0.0)
-    aux_v = obd.get("aux_voltage", 0.0)
-    cec = obd.get("cum_energy_charged_kwh", 0.0)
-    ced = obd.get("cum_energy_discharged_kwh", 0.0)
+    soc_disp = obd.get("soc_display")
+    soc_bms = obd.get("soc_bms")
+    soh = obd.get("soh")
+    hv_volt = obd.get("battery_voltage")
+    hv_curr = obd.get("battery_current")
+    hv_pwr = obd.get("battery_power_kw")
+    max_chg = obd.get("max_charge_power_kw")
+    max_dis = obd.get("max_discharge_power_kw")
+    aux_v = obd.get("aux_voltage")
+    cec = obd.get("cum_energy_charged_kwh")
+    ced = obd.get("cum_energy_discharged_kwh")
     inlet_t = readings.get("inlet_temperature_c")
 
-    print(f"  • State of Charge (SOC) : {BOLD}{soc_disp:.1f}%{RESET} (Cluster) | {BOLD}{soc_bms:.1f}%{RESET} (BMS Internal)")
-    print(f"  • State of Health (SOH) : {BOLD}{GREEN}{soh:.1f}%{RESET}")
-    print(f"  • Pack High Voltage     : {BOLD}{hv_volt:.1f} V{RESET}")
-    print(f"  • Pack Current          : {BOLD}{hv_curr:+.1f} A{RESET}")
-    print(f"  • Instantaneous Power   : {BOLD}{hv_pwr:+.2f} kW{RESET}")
-    print(f"  • Allowed Charge Limit  : {BOLD}{max_chg:.1f} kW{RESET}")
-    print(f"  • Allowed Discharge Lim : {BOLD}{max_dis:.1f} kW{RESET}")
-    print(f"  • Aux 12V System Voltage: {BOLD}{aux_v:.1f} V{RESET}")
-    print(f"  • Cumulative Energy In  : {cec:,.1f} kWh (CEC)")
-    print(f"  • Cumulative Energy Out : {ced:,.1f} kWh (CED)")
+    print(f"  • State of Charge (SOC) : {BOLD}{format_value(soc_disp, '.1f')}%{RESET} (Cluster) | {BOLD}{format_value(soc_bms, '.1f')}%{RESET} (BMS Internal)")
+    print(f"  • State of Health (SOH) : {BOLD}{GREEN}{format_value(soh, '.1f')}%{RESET}")
+    print(f"  • Pack High Voltage     : {BOLD}{format_value(hv_volt, '.1f')} V{RESET}")
+    print(f"  • Pack Current          : {BOLD}{format_value(hv_curr, '+.1f')} A{RESET}")
+    print(f"  • Instantaneous Power   : {BOLD}{format_value(hv_pwr, '+.2f')} kW{RESET}")
+    print(f"  • Allowed Charge Limit  : {BOLD}{format_value(max_chg, '.1f')} kW{RESET}")
+    print(f"  • Allowed Discharge Lim : {BOLD}{format_value(max_dis, '.1f')} kW{RESET}")
+    print(f"  • Aux 12V System Voltage: {BOLD}{format_value(aux_v, '.1f')} V{RESET}")
+    print(f"  • Cumulative Energy In  : {format_value(cec, ',.1f')} kWh (CEC)")
+    print(f"  • Cumulative Energy Out : {format_value(ced, ',.1f')} kWh (CED)")
 
     # Thermals
     print(f"\n  {BOLD}Thermal Telemetry:{RESET}")
@@ -154,27 +159,41 @@ def main():
     # 3. Auxiliary Low DC-DC Converter (LDC)
     print(f"\n{BOLD}{CYAN}3. LOW DC-DC CONVERTER (LDC - Header 7E5){RESET}")
     print("-" * 68)
-    print(f"  • 12V Output Voltage    : {BOLD}{aux_v:.1f} V{RESET}")
-    print(f"  • LDC Converter State   : {BOLD}{GREEN}Active / Charging 12V System{RESET}")
+    print(f"  • 12V Output Voltage    : {BOLD}{format_value(aux_v, '.1f')} V{RESET}")
+    print("  • LDC Converter State   : Unavailable (not queried)")
 
     # 4. Diagnostic Trouble Codes (DTCs)
     print(f"\n{BOLD}{CYAN}4. DIAGNOSTIC TROUBLE CODES (DTCs){RESET}")
     print("-" * 68)
     modules = dtcs.get("modules", {})
     all_codes = []
-    for ecu_id, m in modules.items():
-        faults = m.get("faults", {})
-        for kind, kind_data in faults.items():
-            codes = kind_data.get("codes", []) or []
-            for c in codes:
-                all_codes.append((ecu_id, kind, c.get("code"), c.get("description")))
+    coverage = []
+    valid_reads = 0
+    for ecu_id, module in modules.items():
+        faults = module.get("faults", {})
+        for kind in ("03", "07", "0A"):
+            result = faults.get(kind)
+            if not isinstance(result, dict) or result.get("status") != "ok":
+                coverage.append(f"{ecu_id} Mode {kind}: unavailable")
+                continue
+            valid_reads += 1
+            for code in result.get("codes") or []:
+                all_codes.append((ecu_id, kind, code.get("code"), code.get("description")))
+        if isinstance(faults.get("status"), str):
+            coverage.append(f"{ecu_id}: {faults['status']}")
 
-    if not all_codes:
-        print(f"  {BOLD}{GREEN}✓ No active, pending, or permanent fault codes detected across all ECUs.{RESET}")
-    else:
-        for ecu, kind, code, desc in all_codes:
-            kind_str = {"03": "Confirmed", "07": "Pending", "0A": "Permanent Stored"}.get(kind, kind)
-            print(f"  • ECU {BOLD}{ecu}{RESET} [{kind_str}]: {BOLD}{YELLOW}{code}{RESET} - {desc}")
+    for ecu, kind, code, desc in all_codes:
+        kind_str = {"03": "Confirmed", "07": "Pending", "0A": "Permanent Stored"}[kind]
+        print(f"  • ECU {BOLD}{ecu}{RESET} [{kind_str}]: {BOLD}{YELLOW}{code}{RESET} - {desc}")
+    if not modules:
+        print("  Fault coverage unavailable: no responding ECUs.")
+    elif not valid_reads:
+        print("  Fault coverage unavailable: no valid standard OBD responses.")
+    elif not all_codes:
+        print("  No fault codes in valid standard OBD responses.")
+    for message in coverage:
+        print(f"  • Fault coverage: {message}")
+    print("  Hyundai-specific ECU faults are not queried.")
 
     print("\n" + "=" * 68 + "\n")
 

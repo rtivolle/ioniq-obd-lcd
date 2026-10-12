@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
+VEHICLE_CATALOG = json.loads((ROOT / 'docs/vehicle/ioniq-2017.json').read_text())
 
 
 class PreviewState:
@@ -31,6 +32,7 @@ class PreviewState:
 
     def __init__(self):
         self.lock = threading.Lock()
+        self.desired_settings = {}
         self.config = {
             "bluetooth_mac": "00:1D:A5:68:98:8B",
             "bluetooth_name": "Vgate iCar Pro",
@@ -136,7 +138,30 @@ class PreviewState:
             {"name": "<img src=x onerror=\"window.__ioniqUnsafeName=true\"> ELM327's & \"OBD\"", "mac": "AA:BB:CC:DD:EE:FF", "rssi": "-71", "paired": False, "connected": False, "preview": True},
         ]
 
+    def vehicle_settings(self):
+        return {'preview': True, 'profile': VEHICLE_CATALOG['profile'], 'settings': {
+            key: {**definition, 'desired_value': self.desired_settings.get(key),
+                  'vehicle_value': None, 'read_supported': False, 'write_supported': False,
+                  'status': 'pending_protocol' if key in self.desired_settings else 'unsupported'}
+            for key, definition in VEHICLE_CATALOG['persistent_settings'].items()}}
+
     def mutate(self, path, payload):
+        if path == '/api/vehicle/settings':
+            if not payload:
+                raise ValueError('Provide at least one desired setting')
+            for key, value in payload.items():
+                definition = VEHICLE_CATALOG['persistent_settings'].get(key)
+                if not definition:
+                    raise ValueError('Unknown setting')
+                if definition['type'] == 'integer':
+                    if type(value) is not int or not definition['min'] <= value <= definition['max']:
+                        raise ValueError('Invalid desired charge limit')
+                elif value not in definition['choices']:
+                    raise ValueError('Invalid desired preference')
+            self.desired_settings.update(payload)
+            return {'success': True, 'message': 'Preview request saved in memory only. Not applied to vehicle.', **self.vehicle_settings()}
+        if path.startswith('/api/vehicle/'):
+            raise ValueError('Vehicle operations unavailable in sample-data preview')
         result = {"success": True, "preview": True}
         if path == "/api/config":
             self.config.update({key: value for key, value in payload.items() if key in self.config and key != "preview"})
@@ -220,6 +245,10 @@ class PreviewHandler(BaseHTTPRequestHandler):
                 return self.send_json(self.state.status())
             if path == "/api/config":
                 return self.send_json(dict(self.state.config))
+            if path == '/api/vehicle/capabilities':
+                return self.send_json({**VEHICLE_CATALOG, 'preview': True})
+            if path == '/api/vehicle/settings':
+                return self.send_json(self.state.vehicle_settings())
             if path == "/api/trips":
                 return self.send_json(self.state.trips)
             if path == "/api/charging":

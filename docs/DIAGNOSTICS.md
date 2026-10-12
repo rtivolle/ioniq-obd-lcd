@@ -71,11 +71,13 @@ validation or actuator promotion is implemented.
 
 ## Service controls
 
-No verified actuator allowlist exists for this vehicle. Fans, pumps, locks, and
-charging commands remain unavailable. There is no arbitrary-command web endpoint.
-Adding a service action requires documented ECU identity, exact request/response,
-vehicle prerequisites, operator confirmation, and a validated recovery procedure.
-ELM327 protocol support alone does not establish an actuator’s availability.
+The Connection page now includes a source-pinned ECU/PID browser and a fixed
+allowlist of temporary IGPM/BCM body controls. Commands require fresh stationary
+telemetry and two explicit operator confirmations, execute on the sole OBD worker,
+and record an audit before activation. Persistent charge limits and locking
+preferences can be saved as local requests and investigated through before/after
+read captures; actual persistent vehicle writes remain unavailable.
+See [vehicle management scope and acceptance gates](vehicle/README.md).
 
 ## Verification
 

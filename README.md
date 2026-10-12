@@ -135,6 +135,19 @@ connection is enabled). Only the OBD worker owns Bluetooth I/O; web operations
 are queued between polls, including scanning, pairing, reconnecting, forgetting,
 and `/api/bluetooth/disconnect`.
 
+The dashboard and LCD recheck freshness when reading the latest worker snapshot,
+including during scans, diagnostics, and disconnects. When standard speed is
+unavailable, the existing motor-RPM estimate is used only if RPM was received;
+missing speed and RPM stay unavailable and cannot satisfy the stationary check
+for fault clearing. `python3 readout.py` displays missing telemetry as
+`Unavailable` and reports unsupported fault coverage explicitly.
+
+Trip sample lookups use an automatically created SQLite index. CSV exports read
+a committed snapshot on a separate connection and iterate rows directly, so a
+large export does not hold the telemetry recording lock. The response still
+contains the complete CSV in memory. Polling retains a 0.45-second wait between
+cycles, with queued operations able to interrupt the entire wait.
+
 Automatic driving trips start above 2 km/h. Stationary battery consumption does
 not start a trip. Stationary charging indicated by the BMS ends the driving trip
 and records a separate charging session. Motion takes priority over the charging
@@ -164,3 +177,16 @@ fault clearing saves a fresh report and requires an explicit operator confirmati
 before Mode 04. Community battery definitions remain unvalidated on the physical
 vehicle; unsupported ECU services and actuator controls stay unavailable.
 See [diagnostic scope, sources, and validation](docs/DIAGNOSTICS.md).
+
+## Vehicle management and settings
+
+The Connection page now browses 31 documented ECU addresses and 73 allowlisted
+read requests, with raw saved reports and community source definitions. Temporary
+body controls include documented lighting, horn, door/charge-cable locks and mirror
+commands with explicit confirmation, timed release, and audit records. Physical
+vehicle and adapter acceptance testing is still required.
+
+Desired AC/DC charge limits and automatic lock/unlock preferences can be saved
+locally and investigated through before/after candidate ECU captures. **They are
+not applied to the vehicle:** no verified persistent read/write protocol exists
+in this application yet. See [vehicle management details](docs/vehicle/README.md).
