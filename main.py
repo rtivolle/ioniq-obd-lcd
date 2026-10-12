@@ -160,14 +160,23 @@ def obd_worker():
             mac = config.get("bluetooth_mac", "").strip()
             if bt_conn is None:
                 if manual_disconnect or not mac or not config.get("auto_connect", True):
+                    with data_lock:
+                        current_data.status_text = "Disconnected"
+                        cached_obd_dict = current_data.to_dict()
                     continue
                 if time.monotonic() < retry_at:
                     continue
                 try:
+                    with data_lock:
+                        current_data.status_text = "Connecting..."
+                        cached_obd_dict = current_data.to_dict()
                     connect_adapter(mac)
                 except Exception:
                     logger.exception("BT connect error")
                     close_connection()
+                    with data_lock:
+                        current_data.status_text = "Connect failed"
+                        cached_obd_dict = current_data.to_dict()
                 retry_at = time.monotonic() + 3
                 if live_obd is None:
                     continue

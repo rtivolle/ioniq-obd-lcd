@@ -22,6 +22,7 @@ class LCDDriver:
         self.last_page_switch = time.time()
         self.last_line1 = ""
         self.last_line2 = ""
+        self.last_write_time = 0.0
 
     def _init_lcd(self):
         try:
@@ -55,21 +56,28 @@ class LCDDriver:
             self.last_line1 = ""
             self.last_line2 = ""
 
-    def show_message(self, line1: str, line2: str = "", duration: float = 0.0):
+    def show_message(self, line1: str, line2: str = "", duration: float = 0.0, force: bool = False):
         """Displays arbitrary text. If duration > 0, locks out background updates for that time."""
         with self.lock:
+            now = time.time()
             l1 = (line1[:16]).ljust(16)
             l2 = (line2[:16]).ljust(16)
-            if l1 != self.last_line1 or l2 != self.last_line2:
+            if force or l1 != self.last_line1 or l2 != self.last_line2 or (now - self.last_write_time > 5.0):
                 if self.lcd:
                     try:
+                        self.lcd.clear()
                         self.lcd.message = f"{l1}\n{l2}"
+                        self.last_write_time = now
                     except Exception as e:
                         logger.warning("LCD write error: %s", e)
+                        try:
+                            self._init_lcd()
+                        except Exception:
+                            pass
                 self.last_line1 = l1
                 self.last_line2 = l2
             if duration > 0:
-                self.custom_override_until = time.time() + duration
+                self.custom_override_until = now + duration
 
     def format_metric(self, key: str, obd_dict: Dict[str, Any], trip_dict: Dict[str, Any]) -> str:
         """Formats a single metric into a compact LCD-friendly string."""
