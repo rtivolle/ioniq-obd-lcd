@@ -68,10 +68,10 @@ class BluetoothSerialConnection:
 
         try:
             while expected not in self._buffer:
-                remaining = max(0.1, deadline - time.time())
+                remaining = deadline - time.time()
                 if remaining <= 0:
                     break
-                self.sock.settimeout(remaining)
+                self.sock.settimeout(max(0.01, remaining))
                 try:
                     chunk = self.sock.recv(1024)
                     if not chunk:

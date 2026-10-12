@@ -29,7 +29,6 @@ class TripLogger:
     def __init__(self, db_path: str = "/home/rtivolle/ioniq_obd/trips.db"):
         self.lock = threading.RLock()
         self.db_path = db_path
-        self._init_db()
         self.active_trip_id: Optional[int] = None
         self.active_start_time: float = 0.0
         self.last_sample_time: float = 0.0
@@ -48,18 +47,36 @@ class TripLogger:
         self.charge_energy = 0.0
         self.charge_duration = 0.0
         self.charge_last_sample = 0.0
+        self._conn: Optional[sqlite3.Connection] = None
+        self._init_db()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+        return self._conn
 
     @contextmanager
     def _transaction(self):
-        conn = sqlite3.connect(self.db_path)
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+        conn = self._get_conn()
+        with conn:
+            yield conn
+
+    def close(self):
+        with self.lock:
+            if self._conn:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+
+    def __del__(self):
+        self.close()
 
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS trips (
@@ -109,7 +126,6 @@ class TripLogger:
                 end_time = COALESCE(datetime(checkpoint_time, 'unixepoch', 'localtime'), start_time)
                 WHERE status = 'active'""")
         conn.commit()
-        conn.close()
 
     @synchronized
     def start_trip(self, current_soc: float = 0.0) -> int:
@@ -119,15 +135,13 @@ class TripLogger:
         if self.active_trip_id is not None:
             return self.active_trip_id
         now = time.time()
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO trips (start_time, start_soc, status)
-            VALUES (datetime(?, 'unixepoch', 'localtime'), ?, 'active')
-        """, (now, current_soc))
-        trip_id = cur.lastrowid
-        conn.commit()
-        conn.close()
+        with self._transaction() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO trips (start_time, start_soc, status)
+                VALUES (datetime(?, 'unixepoch', 'localtime'), ?, 'active')
+            """, (now, current_soc))
+            trip_id = cur.lastrowid
 
         self.active_trip_id = trip_id
         self.active_start_time = now
@@ -255,33 +269,31 @@ class TripLogger:
         avg_speed = round(self.distance_km / duration_hours, 1)
         net_kwh = round(self.energy_used_kwh - self.energy_regen_kwh, 2)
 
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE trips
-            SET end_time = datetime(?, 'unixepoch', 'localtime'),
-                distance_km = ?,
-                energy_used_kwh = ?,
-                energy_regen_kwh = ?,
-                net_kwh = ?,
-                max_speed_kmh = ?,
-                avg_speed_kmh = ?,
-                end_soc = ?,
-                status = 'completed'
-            WHERE id = ?
-        """, (
-            now,
-            round(self.distance_km, 2),
-            round(self.energy_used_kwh, 2),
-            round(self.energy_regen_kwh, 2),
-            net_kwh,
-            round(self.max_speed_kmh, 1),
-            avg_speed,
-            round(self.last_soc, 1) if self.last_soc is not None else None,
-            self.active_trip_id
-        ))
-        conn.commit()
-        conn.close()
+        conn = self._get_conn()
+        with conn:
+            conn.execute("""
+                UPDATE trips
+                SET end_time = datetime(?, 'unixepoch', 'localtime'),
+                    distance_km = ?,
+                    energy_used_kwh = ?,
+                    energy_regen_kwh = ?,
+                    net_kwh = ?,
+                    max_speed_kmh = ?,
+                    avg_speed_kmh = ?,
+                    end_soc = ?,
+                    status = 'completed'
+                WHERE id = ?
+            """, (
+                now,
+                round(self.distance_km, 2),
+                round(self.energy_used_kwh, 2),
+                round(self.energy_regen_kwh, 2),
+                net_kwh,
+                round(self.max_speed_kmh, 1),
+                avg_speed,
+                round(self.last_soc, 1) if self.last_soc is not None else None,
+                self.active_trip_id
+            ))
 
         finished_id = self.active_trip_id
         self.active_trip_id = None
@@ -314,26 +326,24 @@ class TripLogger:
 
     @synchronized
     def get_all_trips(self) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM trips ORDER BY id DESC LIMIT 50")
-        rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
-        return rows
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM trips ORDER BY id DESC LIMIT 50")
+            return [dict(r) for r in cur.fetchall()]
 
+    @synchronized
     def export_trip_csv(self, trip_id: int) -> str:
         """Exports all samples of a given trip to CSV string."""
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT timestamp, speed_kmh, power_kw, voltage, current, soc, aux_voltage, battery_temp
-            FROM trip_samples
-            WHERE trip_id = ?
-            ORDER BY id ASC
-        """, (trip_id,))
-        rows = cur.fetchall()
-        conn.close()
+        with self._transaction() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT timestamp, speed_kmh, power_kw, voltage, current, soc, aux_voltage, battery_temp
+                FROM trip_samples
+                WHERE trip_id = ?
+                ORDER BY id ASC
+            """, (trip_id,))
+            rows = cur.fetchall()
 
         output = io.StringIO()
         writer = csv.writer(output)

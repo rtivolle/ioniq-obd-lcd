@@ -40,6 +40,7 @@ diagnostics = Diagnostics(trip_logger.db_path)
 bt_conn: Optional[BluetoothSerialConnection] = None
 live_obd: Optional[IoniqOBD] = None
 current_data: IoniqData = IoniqData(connected=False, status_text="Starting OBD...")
+cached_obd_dict: Dict[str, Any] = current_data.to_dict()
 data_lock = threading.Lock()
 running = True
 worker_requests = queue.Queue()
@@ -83,7 +84,8 @@ def handle_worker_request(action, payload):
     if action == "scan" or action.startswith("diagnostic_"):
         with data_lock:
             current_data.metric_valid = {}
-        trip_logger.record_sample(IoniqData().to_dict())
+            cached_obd_dict = current_data.to_dict()
+        trip_logger.record_sample(cached_obd_dict)
         if action == "scan":
             return BluetoothManager.scan_devices(timeout=5)
         if live_obd is None or bt_conn is None or not bt_conn.connected:
@@ -171,13 +173,16 @@ def obd_worker():
                     continue
             try:
                 polled = live_obd.query_all()
+                polled_dict = polled.to_dict()
                 with data_lock:
-                    # Publish a separate object so later polls cannot mutate the snapshot.
-                    current_data = copy.deepcopy(polled)
-                trip_logger.record_sample(polled.to_dict(), auto_manage=config.get("trip_auto_record", True))
+                    current_data = polled.clone()
+                    cached_obd_dict = polled_dict
+                trip_logger.record_sample(polled_dict, auto_manage=config.get("trip_auto_record", True))
                 if live_obd.reconnect_required:
                     close_connection()
                     retry_at = time.monotonic() + 3
+                else:
+                    time.sleep(0.15)
             except Exception:
                 logger.exception("OBD poll error")
                 close_connection()
@@ -193,7 +198,7 @@ def lcd_worker():
     while running:
         try:
             with data_lock:
-                obd_dict = current_data.to_dict()
+                obd_dict = cached_obd_dict
             trip_dict = trip_logger.get_active_trip_summary()
             lcd.update_from_data(obd_dict, trip_dict, config)
         except Exception as e:
@@ -213,7 +218,7 @@ def index():
 @app.route("/api/status")
 def api_status():
     with data_lock:
-        obd_dict = current_data.to_dict()
+        obd_dict = cached_obd_dict
     trip_dict = trip_logger.get_active_trip_summary()
     lcd_mirror = {
         "line1": lcd.last_line1,

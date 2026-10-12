@@ -63,7 +63,6 @@ class LCDDriver:
             if l1 != self.last_line1 or l2 != self.last_line2:
                 if self.lcd:
                     try:
-                        self.lcd.clear()
                         self.lcd.message = f"{l1}\n{l2}"
                     except Exception as e:
                         logger.warning("LCD write error: %s", e)
