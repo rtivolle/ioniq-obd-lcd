@@ -366,12 +366,15 @@ def api_trips_csv(trip_id: int):
 @app.route("/api/lcd/message", methods=["POST"])
 def api_lcd_message():
     data = request.json or {}
-    msg = data.get("message", "")
+    l1 = data.get("line1", "")
+    l2 = data.get("line2", "")
+    if not l1 and not l2 and "message" in data:
+        msg = data.get("message", "")
+        lines = msg.split("\\n") if "\\n" in msg else msg.split("\n")
+        l1 = lines[0] if len(lines) > 0 else ""
+        l2 = lines[1] if len(lines) > 1 else ""
     duration = float(data.get("duration", 5.0))
-    lines = msg.split("\\n") if "\\n" in msg else msg.split("\n")
-    l1 = lines[0] if len(lines) > 0 else ""
-    l2 = lines[1] if len(lines) > 1 else ""
-    lcd.show_message(l1, l2, duration=duration)
+    lcd.show_message(l1, l2, duration=duration, force=True)
     return jsonify({"success": True, "message": f"Displayed on LCD: {l1} / {l2}"})
 
 

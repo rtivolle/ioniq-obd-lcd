@@ -11,11 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 class LCDDriver:
-    """Controls 1602A LCD via Adafruit CircuitPython CharacterLCD."""
+    """Controls 1602A LCD via direct HD44780 4-bit GPIO communication."""
 
     def __init__(self):
         self.lock = threading.Lock()
         self.lcd = None
+        self._rs = None
+        self._en = None
+        self._d4 = None
+        self._d5 = None
+        self._d6 = None
+        self._d7 = None
         self._init_lcd()
         self.custom_override_until: float = 0.0
         self.current_page_idx = 0
@@ -24,24 +30,73 @@ class LCDDriver:
         self.last_line2 = ""
         self.last_write_time = 0.0
 
+    def _pulse_en(self):
+        self._en.value = False
+        time.sleep(0.00005)  # 50 microseconds
+        self._en.value = True
+        time.sleep(0.00005)
+        self._en.value = False
+        time.sleep(0.00005)
+
+    def _write4(self, nibble: int):
+        self._d4.value = bool(nibble & 0x01)
+        self._d5.value = bool(nibble & 0x02)
+        self._d6.value = bool(nibble & 0x04)
+        self._d7.value = bool(nibble & 0x08)
+        self._pulse_en()
+
+    def _send(self, value: int, is_data: bool = False):
+        self._rs.value = is_data
+        self._write4(value >> 4)
+        self._write4(value & 0x0F)
+        time.sleep(0.00005)
+
+    def _reset_hd44780(self):
+        self._rs.value = False
+        self._en.value = False
+        time.sleep(0.050)  # Wait 50ms after power up
+        # Three 0x03 sync pulses per HD44780 standard
+        self._write4(0x03)
+        time.sleep(0.005)
+        self._write4(0x03)
+        time.sleep(0.001)
+        self._write4(0x03)
+        time.sleep(0.001)
+        # Switch to 4-bit mode
+        self._write4(0x02)
+        time.sleep(0.001)
+        # Function set: 4-bit, 2 lines, 5x8 font (0x28)
+        self._send(0x28, is_data=False)
+        time.sleep(0.001)
+        # Display ON, Cursor OFF, Blink OFF (0x0C)
+        self._send(0x0C, is_data=False)
+        time.sleep(0.001)
+        # Clear display (0x01)
+        self._send(0x01, is_data=False)
+        time.sleep(0.003)
+        # Entry mode: increment cursor (0x06)
+        self._send(0x06, is_data=False)
+        time.sleep(0.001)
+
     def _init_lcd(self):
         try:
             import board
             import digitalio
-            import adafruit_character_lcd.character_lcd as characterlcd
 
-            lcd_rs = digitalio.DigitalInOut(board.D22)
-            lcd_en = digitalio.DigitalInOut(board.D17)
-            lcd_d4 = digitalio.DigitalInOut(board.D25)
-            lcd_d5 = digitalio.DigitalInOut(board.D24)
-            lcd_d6 = digitalio.DigitalInOut(board.D23)
-            lcd_d7 = digitalio.DigitalInOut(board.D18)
+            self._rs = digitalio.DigitalInOut(board.D22)
+            self._en = digitalio.DigitalInOut(board.D17)
+            self._d4 = digitalio.DigitalInOut(board.D25)
+            self._d5 = digitalio.DigitalInOut(board.D24)
+            self._d6 = digitalio.DigitalInOut(board.D23)
+            self._d7 = digitalio.DigitalInOut(board.D18)
 
-            self.lcd = characterlcd.Character_LCD_Mono(
-                lcd_rs, lcd_en, lcd_d4, lcd_d5, lcd_d6, lcd_d7, 16, 2
-            )
-            self.lcd.clear()
-            logger.info("1602A LCD initialized successfully.")
+            for pin in (self._rs, self._en, self._d4, self._d5, self._d6, self._d7):
+                pin.direction = digitalio.Direction.OUTPUT
+                pin.value = False
+
+            self._reset_hd44780()
+            self.lcd = True
+            logger.info("1602A HD44780 LCD initialized successfully.")
         except Exception as e:
             logger.error("Failed to initialize hardware LCD: %s", e)
             self.lcd = None
@@ -50,7 +105,8 @@ class LCDDriver:
         with self.lock:
             if self.lcd:
                 try:
-                    self.lcd.clear()
+                    self._send(0x01, is_data=False)
+                    time.sleep(0.003)
                 except Exception as e:
                     logger.warning("LCD clear error: %s", e)
             self.last_line1 = ""
@@ -65,8 +121,16 @@ class LCDDriver:
             if force or l1 != self.last_line1 or l2 != self.last_line2 or (now - self.last_write_time > 5.0):
                 if self.lcd:
                     try:
-                        self.lcd.clear()
-                        self.lcd.message = f"{l1}\n{l2}"
+                        # Direct write to Line 1 (DDRAM 0x80)
+                        self._send(0x80, is_data=False)
+                        for c in l1:
+                            self._send(ord(c), is_data=True)
+
+                        # Direct write to Line 2 (DDRAM 0xC0)
+                        self._send(0xC0, is_data=False)
+                        for c in l2:
+                            self._send(ord(c), is_data=True)
+
                         self.last_write_time = now
                     except Exception as e:
                         logger.warning("LCD write error: %s", e)
