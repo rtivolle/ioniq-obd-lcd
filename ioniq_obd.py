@@ -47,7 +47,7 @@ class IoniqData:
             result["fresh"][key] = fresh
             if not fresh:
                 result[key] = None
-        if self.connected and not all(result["fresh"][key] for key in CORE_METRICS):
+        if self.connected and not (any(result["fresh"].get(key) for key in ("battery_voltage", "soc_bms")) or all(result["fresh"].get(key) for key in CORE_METRICS)):
             result["status_text"] = "Data unavailable"
         return result
 
@@ -234,6 +234,12 @@ class IoniqOBD:
                         rpm -= 65536
                     self.data.motor_rpm = rpm
                     mark("motor_rpm")
+                    if not self.data.metric_valid.get("speed_kmh"):
+                        self.data.speed_kmh = round(abs(rpm) / 68.0, 1) if rpm != 0 else 0.0
+                        mark("speed_kmh")
+                elif not self.data.metric_valid.get("speed_kmh"):
+                    self.data.speed_kmh = 0.0
+                    mark("speed_kmh")
 
             # 3. Query BMS Extended PID 2105 (SOH & Display SOC)
             soh_resp = self._send_command("21 05", timeout=1.5)
@@ -253,7 +259,7 @@ class IoniqOBD:
             self.data.connected = False
             self.data.status_text = f"Error: {e}"
 
-        valid = self.data.connected and all(self.data.metric_valid.get(k) for k in CORE_METRICS)
+        valid = self.data.connected and (all(self.data.metric_valid.get(k) for k in CORE_METRICS) or any(self.data.metric_valid.get(k) for k in ("battery_voltage", "soc_bms")))
         self.consecutive_failures = 0 if valid else self.consecutive_failures + 1
         self.reconnect_required = self.consecutive_failures >= 3 or not self.data.connected
         self.data.status_text = "Live Data OK" if valid else "Data unavailable"

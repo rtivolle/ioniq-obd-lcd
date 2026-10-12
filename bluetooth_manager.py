@@ -28,19 +28,30 @@ class BluetoothSerialConnection:
 
     def connect(self) -> bool:
         self.close()
-        try:
-            logger.info("Connecting RFCOMM socket to %s on channel %s...", self.mac, self.channel)
-            sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            sock.settimeout(self.timeout)
-            sock.connect((self.mac, self.channel))
-            self.sock = sock
-            self.connected = True
-            logger.info("Connected to %s successfully.", self.mac)
-            return True
-        except Exception as e:
-            logger.error("Failed to connect to %s: %s", self.mac, e)
-            self.close()
-            return False
+        channels = [self.channel] + [c for c in [2, 1, 3, 4] if c != self.channel]
+        for ch in channels:
+            try:
+                logger.info("Connecting RFCOMM socket to %s on channel %s...", self.mac, ch)
+                sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+                sock.settimeout(self.timeout)
+                sock.connect((self.mac, ch))
+                self.sock = sock
+                self.channel = ch
+                self.connected = True
+                logger.info("Connected to %s on channel %s successfully.", self.mac, ch)
+                return True
+            except (ConnectionRefusedError, OSError) as e:
+                logger.debug("Channel %s failed on %s: %s", ch, self.mac, e)
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                continue
+            except Exception as e:
+                logger.error("Failed to connect to %s on channel %s: %s", self.mac, ch, e)
+                self.close()
+                return False
+        return False
 
     def write(self, data: bytes) -> int:
         if not self.connected or not self.sock:

@@ -83,43 +83,43 @@ class LCDDriver:
             return f"{key[:3].title()}:--"
         if key == "soc":
             val = obd_dict.get("soc_display", obd_dict.get("soc_bms", 0.0))
-            return f"SOC:{val:4.1f}%"
+            return f"S:{val:4.1f}%"
         elif key == "power":
             val = obd_dict.get("battery_power_kw", 0.0)
-            sign = "+" if val > 0 else ""
-            return f"Pwr:{sign}{val:4.1f}k"
+            return f"P:{val:+.1f}k"
         elif key == "speed":
-            val = obd_dict.get("speed_kmh", 0.0)
-            return f"Spd:{int(val):3d}km/h"
+            val = obd_dict.get("speed_kmh")
+            val = float(val) if val is not None else 0.0
+            return f"Spd:{int(val):3d}"
         elif key == "voltage":
             val = obd_dict.get("battery_voltage", 0.0)
-            return f"HV:{val:5.1f}V"
+            return f"HV:{int(round(val)):3d}V"
         elif key == "current":
             val = obd_dict.get("battery_current", 0.0)
-            return f"I:{val:5.1f}A"
+            return f"I:{val:4.1f}A"
         elif key == "aux":
             val = obd_dict.get("aux_voltage", 0.0)
-            return f"Aux:{val:4.1f}V"
+            return f"Aux:{val:4.1f}"
         elif key == "temp":
             val = obd_dict.get("battery_max_temp", 0)
-            return f"Tmp:{val:2d}C"
+            return f"T:{val:2d}C"
         elif key == "soh":
             val = obd_dict.get("soh", 100.0)
-            return f"SOH:{val:4.1f}%"
+            return f"SOH:{int(round(val)):2d}%"
         elif key == "rpm":
             val = obd_dict.get("motor_rpm", 0)
-            return f"RPM:{val:5d}"
+            return f"RPM:{val:4d}"
         elif key == "trip_dist":
             dist = trip_dict.get("distance_km", 0.0)
-            return f"Dst:{dist:4.1f}km"
+            return f"D:{dist:4.1f}k"
         elif key == "trip_time":
             dur = int(trip_dict.get("duration_sec", 0))
             mins = dur // 60
-            return f"Tim:{mins:3d}min"
+            return f"T:{mins:3d}m"
         elif key == "trip_kwh":
             kwh = trip_dict.get("net_kwh", 0.0)
-            return f"E:{kwh:4.1f}kWh"
-        return key[:8]
+            return f"E:{kwh:4.1f}k"
+        return key[:7]
 
     def update_from_data(
         self,
@@ -139,7 +139,7 @@ class LCDDriver:
             self.show_message("OBD2 Waiting...", status[:16])
             return
 
-        if any(obd_dict.get(key) is None for key in ("speed_kmh", "battery_power_kw", "is_charging")):
+        if obd_dict.get("battery_voltage") is None and obd_dict.get("soc_bms") is None:
             self.show_message("Data unavailable", "Waiting for OBD")
             return
 

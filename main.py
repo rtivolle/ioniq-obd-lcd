@@ -67,7 +67,8 @@ def close_connection():
 def connect_adapter(mac):
     global bt_conn, live_obd
     close_connection()
-    conn = BluetoothSerialConnection(mac=mac, channel=1, timeout=4.0)
+    channel = config.get("bluetooth_channel", 2)
+    conn = BluetoothSerialConnection(mac=mac, channel=channel, timeout=4.0)
     if conn.connect():
         obd = IoniqOBD(conn)
         if obd.initialize_elm327():
