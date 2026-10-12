@@ -12,6 +12,49 @@ with patch('lcd_driver.LCDDriver._init_lcd'):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_poll_publishes_live_readings_and_disconnect_invalidates_them(self):
+        from ioniq_obd import IoniqData, METRICS
+        import time
+        sample = IoniqData(connected=True, speed_kmh=36, battery_voltage=360)
+        sample.metric_valid = dict.fromkeys(METRICS, True)
+        sample.metric_updated_at = dict.fromkeys(METRICS, time.time())
+        responses = []
+
+        class Connection:
+            connected = True
+            def close(self):
+                self.connected = False
+
+        class OBD:
+            reconnect_required = False
+            def query_all(self):
+                return sample
+
+        def inspect_poll(data, **kwargs):
+            responses.append(main.app.test_client().get('/api/status').json['obd'])
+            main.running = False
+
+        main.running = True
+        main.bt_conn, main.live_obd = Connection(), OBD()
+        with patch.object(main.trip_logger, 'record_sample', side_effect=inspect_poll):
+            main.obd_worker()
+        self.assertEqual(responses[0]['speed_kmh'], 36)
+        self.assertTrue(responses[0]['fresh']['speed_kmh'])
+        self.assertIsNone(responses[-1]['speed_kmh'])
+        self.assertFalse(responses[-1]['connected'])
+
+    def test_status_expires_readings_and_scan_invalidates_snapshot(self):
+        from ioniq_obd import IoniqData, METRICS
+        sample = IoniqData(connected=True, speed_kmh=36)
+        sample.metric_valid = dict.fromkeys(METRICS, True)
+        sample.metric_updated_at = dict.fromkeys(METRICS, 100)
+        with patch.object(main, 'current_data', sample):
+            with patch('ioniq_obd.time.time', return_value=111):
+                self.assertIsNone(main.app.test_client().get('/api/status').json['obd']['speed_kmh'])
+            with patch('ioniq_obd.time.time', return_value=100), patch.object(main.BluetoothManager, 'scan_devices', return_value=[]):
+                main.handle_worker_request('scan', {})
+                self.assertIsNone(main.app.test_client().get('/api/status').json['obd']['speed_kmh'])
+
     def test_requests_run_on_worker_not_http_thread(self):
         calls = []
         def capture(action, payload):
@@ -29,6 +72,8 @@ class WorkerTests(unittest.TestCase):
                                        ('disconnect', {}), ('forget', {})]:
                     self.assertEqual(client.post('/api/bluetooth/' + route, json=payload).status_code, 200)
                 self.assertEqual(client.get('/api/bluetooth/scan').json, [])
+                for route in ('read', 'controls/prepare', 'controls/execute', 'settings/capture'):
+                    self.assertEqual(client.post('/api/vehicle/' + route, json={}).status_code, 200)
                 self.assertTrue(all(name == 'TestOBDWorker' for _, name in calls))
             finally:
                 main.running = False
@@ -89,6 +134,16 @@ class WorkerTests(unittest.TestCase):
     def test_config_cannot_switch_adapter_outside_worker(self):
         client = main.app.test_client()
         self.assertEqual(client.post('/api/config', json={'bluetooth_mac': 'AA:BB:CC:DD:EE:FF'}).status_code, 400)
+
+    def test_vehicle_settings_api_stores_requests_but_refuses_vehicle_write(self):
+        client = main.app.test_client()
+        self.assertEqual(client.get('/api/vehicle/capabilities').status_code, 200)
+        self.assertEqual(client.post('/api/vehicle/settings', json={'auto_lock':'at_speed'}).status_code, 200)
+        self.assertEqual(client.get('/api/vehicle/settings').json['settings']['auto_lock']['desired_value'], 'at_speed')
+        with patch.object(main, 'submit_worker_request') as queued:
+            self.assertEqual(client.post('/api/vehicle/settings/auto_lock/apply').status_code, 409)
+            queued.assert_not_called()
+        self.assertEqual(client.post('/api/vehicle/settings', json={'ac_charge_limit_pct':True}).status_code, 400)
 
 
 def tearDownModule():

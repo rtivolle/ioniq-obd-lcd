@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/dashboard.css">
   <script src="/static/dashboard.js" defer></script>
   <script src="/static/diagnostics.js" defer></script>
+  <script src="/static/vehicle.js" defer></script>
 </head>
 <body>
   <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -78,7 +79,31 @@
             <p><a href="/api/diagnostics/reports" id="diagnostic-reports-link">Saved diagnostic reports (JSON)</a></p>
             <button class="button danger" id="btn-clear-faults" disabled>Review fault clearing</button>
             <p>Clearing faults does not repair the cause. It also erases freeze-frame data and resets readiness information. Permanent codes remain until the ECU clears them.</p>
-            <h3>Service controls</h3><p>No actuator commands have been verified for this vehicle. Fans, pumps, locks, and charging controls remain unavailable.</p>
+            <h3>Vehicle management</h3><p>Use the ECU browser and body controls below. Definitions are community sourced and have not been validated on this vehicle.</p>
+          </article>
+          <article class="card history-card" style="margin-top:20px">
+            <div class="section-heading"><div><h2>ECU browser &amp; body controls</h2><p id="vehicle-source">Loading documented vehicle capabilities…</p></div></div>
+            <p>2017 Ioniq Electric 28 kWh only. Read replies may be unavailable for this adapter or operating state. Reads show raw payloads and source definitions.</p>
+            <div class="two-fields"><div class="field"><label for="vehicle-ecu">Vehicle module</label><select id="vehicle-ecu"></select></div><div class="field"><label for="vehicle-pid">Read request</label><select id="vehicle-pid"></select></div></div>
+            <button class="button secondary" id="vehicle-read" disabled>Read selected ECU data</button>
+            <h3>Temporary body controls</h3><p>These actuate hardware briefly, then return control to the ECU. They do not save vehicle preferences. Verify the physical result; a reply confirms reception only.</p>
+            <div class="field"><label for="vehicle-control">Control</label><select id="vehicle-control"></select></div>
+            <p id="vehicle-control-notes"></p>
+            <div class="field"><label for="vehicle-state">Current vehicle state</label><select id="vehicle-state"></select></div>
+            <label class="switch-row"><span>I confirm this is a 2017 Ioniq Electric 28 kWh and accept that these community commands are unvalidated on my vehicle.</span><input id="vehicle-profile-confirmed" type="checkbox"></label>
+            <label class="switch-row"><span>I confirm the vehicle is parked, READY is off, charging is stopped, and the selected operating state is correct. People and objects are clear of the selected actuator.</span><input id="vehicle-conditions" type="checkbox"></label>
+            <button class="button danger" id="vehicle-prepare" disabled>Review selected control</button>
+            <p id="vehicle-status" role="status"></p><div id="vehicle-result"></div>
+          </article>
+          <article class="card history-card" style="margin-top:20px">
+            <div class="section-heading"><div><h2>Persistent vehicle settings</h2><p>Save desired settings locally. Vehicle writes await a verified protocol.</p></div></div>
+            <p>Charge limits and auto-lock preferences are not yet readable or writable on this vehicle through this application. These requests do not stop charging or change door behavior.</p>
+            <form id="vehicle-settings-form"><div id="vehicle-setting-fields" class="two-fields"></div><button class="button primary" id="vehicle-settings-save" disabled>Save desired settings locally</button></form>
+            <p id="vehicle-settings-status" role="status"></p>
+            <h3>Capture evidence for persistent settings</h3>
+            <p>Save a baseline, change one preference manually using the vehicle's own menus, then save another snapshot. Candidate ECU pages may not contain the setting; changed bytes can also be live telemetry. This never writes a vehicle setting.</p>
+            <div class="field"><label for="vehicle-capture-setting">Setting to investigate</label><select id="vehicle-capture-setting"><option value="ac_charge_limit_pct">AC charge limit</option><option value="dc_charge_limit_pct">DC charge limit</option><option value="auto_lock">Automatic door locking</option><option value="auto_unlock">Automatic door unlocking</option></select></div>
+            <div class="button-row"><button class="button secondary" id="vehicle-capture-before" disabled>Save baseline snapshot</button><button class="button secondary" id="vehicle-capture-after" disabled>Compare after manual change</button></div>
           </article>
         </section>
         <section id="tab-trips" role="tabpanel" aria-labelledby="nav-trips" class="tab-panel" hidden>
@@ -97,6 +122,7 @@
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden><svg class="icon"><use href="#i-check"/></svg><span id="toast-text"></span><button class="icon-button" id="toast-close" aria-label="Dismiss notification">×</button></div>
   <dialog id="forget-dialog"><form method="dialog"><span class="eyebrow">CONNECTION</span><h2>Forget this adapter?</h2><p>You’ll need to pair it again to reconnect.</p><div class="button-row"><button class="button secondary" value="cancel">Keep adapter</button><button class="button danger" id="confirm-forget" value="forget">Forget adapter</button></div></form></dialog>
+  <dialog id="vehicle-control-dialog"><form method="dialog"><h2>Send vehicle control?</h2><p id="vehicle-confirm-label"></p><p>The command activates for 0.5 seconds before sending an explicit release. Do not automatically repeat an unconfirmed operation.</p><div class="button-row"><button class="button secondary" value="cancel">Cancel</button><button class="button danger" value="execute">Execute confirmed control</button></div></form></dialog>
   <dialog id="clear-faults-dialog"><form method="dialog"><h2>Clear standard OBD faults?</h2><p>A diagnostic report has been saved. This sends Mode 04 to supported OBD ECUs, resets diagnostic information, and does not repair faults.</p><p>Park the vehicle, switch off READY/engine operation, and leave the ignition on as required by your vehicle.</p><label><input type="checkbox" id="clear-conditions"> I confirm the vehicle is parked with READY off and I intend to clear its standard OBD faults.</label><div class="button-row"><button class="button secondary" value="cancel">Cancel</button><button class="button danger" id="confirm-clear-faults" value="clear" disabled>Clear faults</button></div></form></dialog>
   <noscript><div class="noscript-notice">Enable JavaScript to view live telemetry and manage your monitor.</div></noscript>
 </body>

@@ -11,7 +11,7 @@ import sqlite3
 import time
 import threading
 from functools import wraps
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,8 @@ class TripLogger:
                 FOREIGN KEY (trip_id) REFERENCES trips (id)
             )
         """)
+        # SQLite's rowid order also serves ORDER BY id within each trip.
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_trip_samples_trip_id ON trip_samples(trip_id)")
         # Additive migration for existing installations.
         columns = {row[1] for row in cur.execute("PRAGMA table_info(trips)")}
         if "checkpoint_time" not in columns:
@@ -332,22 +334,22 @@ class TripLogger:
             cur.execute("SELECT * FROM trips ORDER BY id DESC LIMIT 50")
             return [dict(r) for r in cur.fetchall()]
 
-    @synchronized
     def export_trip_csv(self, trip_id: int) -> str:
-        """Exports all samples of a given trip to CSV string."""
-        with self._transaction() as conn:
-            cur = conn.cursor()
-            cur.execute("""
+        """Export a committed snapshot without holding the recording lock.
+
+        WAL lets this independent reader coexist with telemetry writes. Iterate
+        rows directly to avoid allocating a second copy of the entire trip.
+        """
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Timestamp", "Speed_kmh", "Power_kW", "Voltage_V", "Current_A", "SOC_pct", "Aux_V", "Battery_Temp_C"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            rows = conn.execute("""
                 SELECT timestamp, speed_kmh, power_kw, voltage, current, soc, aux_voltage, battery_temp
                 FROM trip_samples
                 WHERE trip_id = ?
                 ORDER BY id ASC
             """, (trip_id,))
-            rows = cur.fetchall()
-
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["Timestamp", "Speed_kmh", "Power_kW", "Voltage_V", "Current_A", "SOC_pct", "Aux_V", "Battery_Temp_C"])
-        for r in rows:
-            writer.writerow(r)
+            writer.writerows(rows)
         return output.getvalue()

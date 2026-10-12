@@ -63,12 +63,12 @@ class BluetoothSerialConnection:
         if not self.connected or not self.sock:
             raise ConnectionError("Not connected")
 
-        deadline = time.time() + (timeout if timeout is not None else self.timeout)
+        deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
         original_timeout = self.sock.gettimeout()
 
         try:
             while expected not in self._buffer:
-                remaining = deadline - time.time()
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 self.sock.settimeout(max(0.01, remaining))

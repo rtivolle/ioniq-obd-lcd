@@ -307,9 +307,6 @@ class IoniqOBD:
                     if not self.data.metric_valid.get("speed_kmh"):
                         self.data.speed_kmh = round(abs(rpm) / 68.0, 1) if rpm != 0 else 0.0
                         mark("speed_kmh")
-                elif not self.data.metric_valid.get("speed_kmh"):
-                    self.data.speed_kmh = 0.0
-                    mark("speed_kmh")
 
             # 3. Query BMS Extended PID 2105 (SOH & Display SOC)
             need_soh_poll = (self._poll_count % 5 == 1) or (not self.data.metric_valid.get("soh"))

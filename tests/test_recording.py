@@ -1,4 +1,7 @@
 import tempfile
+import csv
+import io
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -62,6 +65,19 @@ class PollingTests(unittest.TestCase):
             obd.set_header('7E4')
         self.assertEqual(obd._current_header, '')
 
+    def test_missing_speed_and_rpm_remain_unavailable(self):
+        from diagnostics import Diagnostics
+        obd, replies = self.adapter()
+        replies['01 0D'] = 'NO DATA'
+        replies['21 01'] = '6101' + bytes(30).hex()
+        with patch('ioniq_obd.time.time', return_value=100):
+            data = obd.query_all().to_dict()
+            self.assertIsNone(data['speed_kmh'])
+            self.assertFalse(data['fresh']['speed_kmh'])
+            self.assertTrue(data['fresh']['battery_voltage'])
+            with self.assertRaises(ValueError):
+                Diagnostics.check_parked(obd)
+
 
 class RecordingTests(unittest.TestCase):
     def setUp(self):
@@ -70,6 +86,7 @@ class RecordingTests(unittest.TestCase):
         self.logger = TripLogger(self.path)
 
     def tearDown(self):
+        self.logger.close()
         self.tmp.cleanup()
 
     def sample(self, at, speed=36, power=10, charging=False, soc=50, valid=True):
@@ -136,6 +153,71 @@ class RecordingTests(unittest.TestCase):
         self.sample(100, speed=0, power=-7, charging=True)
         with self.assertRaises(ValueError):
             self.logger.start_trip()
+
+    def test_csv_export_filters_trip_and_preserves_sample_order(self):
+        self.sample(100)
+        first_id = self.logger.active_trip_id
+        self.sample(110, speed=72)
+        self.logger.stop_trip()
+        self.sample(120, speed=90)
+        rows = list(csv.reader(io.StringIO(self.logger.export_trip_csv(first_id))))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([float(row[1]) for row in rows[1:]], [36, 72])
+        self.assertEqual(len(list(csv.reader(io.StringIO(self.logger.export_trip_csv(-1))))), 1)
+        plan = self.logger._get_conn().execute(
+            'EXPLAIN QUERY PLAN SELECT * FROM trip_samples WHERE trip_id=? ORDER BY id',
+            (first_id,)).fetchall()
+        self.assertTrue(any('idx_trip_samples_trip_id' in row[3] for row in plan))
+
+    def test_recording_can_continue_during_csv_export(self):
+        self.sample(100)
+        trip_id = self.logger.active_trip_id
+        exporting, release = threading.Event(), threading.Event()
+        errors, exports = [], []
+        original_writer = csv.writer
+
+        class PausingWriter:
+            def __init__(self, output):
+                self.writer = original_writer(output)
+            def writerow(self, row):
+                return self.writer.writerow(row)
+            def writerows(self, rows):
+                # Fetch one row so the reader holds a SQLite snapshot.
+                self.writer.writerow(next(rows))
+                exporting.set()
+                if not release.wait(3):
+                    raise TimeoutError('CSV export was not released')
+                self.writer.writerows(rows)
+
+        def export():
+            try:
+                exports.append(self.logger.export_trip_csv(trip_id))
+            except Exception as exc:
+                errors.append(exc)
+
+        def record():
+            try:
+                self.sample(110, speed=72)
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch('trip_logger.csv.writer', PausingWriter):
+            reader = threading.Thread(target=export)
+            reader.start()
+            writer = threading.Thread(target=record)
+            try:
+                self.assertTrue(exporting.wait(2))
+                writer.start()
+                writer.join(2)
+                self.assertFalse(writer.is_alive(), 'Export blocked telemetry recording')
+            finally:
+                release.set()
+                reader.join(3)
+                if writer.ident is not None:
+                    writer.join(3)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(list(csv.reader(io.StringIO(exports[0])))), 2)
+        self.assertEqual(len(list(csv.reader(io.StringIO(self.logger.export_trip_csv(trip_id))))), 3)
 
 
 if __name__ == '__main__':
